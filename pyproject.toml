@@ -1,0 +1,42 @@
+# Tooling configuration.
+#
+# Kept here rather than in a Makefile or a CI file so that "ruff is clean" and
+# "mypy is clean" are reproducible claims: anyone can run `ruff check .` and
+# `mypy backend scripts` and get the same answer this repository's README
+# reports, without having to know which flags were used.
+#
+# There is deliberately no packaging metadata. AEGIS is run from its checkout
+# (`python run.py`), not installed, and inventing a distribution for it would
+# add a build step nothing needs.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = ["data", "frontend"]
+
+[tool.ruff.lint]
+# F/E/W  correctness and basic hygiene
+# I      import order, so diffs stay small
+# B      bugbear: the real bug classes (late-binding closures, mutable defaults)
+# C4/PIE/RSE  small clarity wins with no behavioural risk
+select = ["F", "E", "W", "I", "B", "C4", "PIE", "RSE"]
+
+# E501: line length is advisory here. Several docstrings explain *why* a
+#   design is what it is, and wrapping them to satisfy a linter makes them
+#   harder to read, which is the opposite of the point.
+# B008: not applicable -- no framework-style default-argument injection.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private state deliberately (lock scope, sink internals) to
+# assert properties that have no public surface, and they import inside test
+# methods to keep heavy fixtures out of module import time.
+"backend/tests/*" = ["B011", "E402"]
+# The harnesses insert the project root on sys.path before importing it, which
+# is the whole reason their imports come after code.
+"scripts/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+exclude = ["backend/tests/"]

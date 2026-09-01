@@ -15,6 +15,7 @@ from typing import Optional
 from backend.common.clock import SYSTEM_CLOCK, Clock
 from backend.common.config import AppConfig, load_config
 from backend.common.logging import get_logger
+from backend.common.metrics import Metrics
 from backend.extraction.contracts import ExtractionProvider
 from backend.extraction.providers.deterministic import DeterministicProvider
 from backend.extraction.service import ExtractionService
@@ -42,6 +43,28 @@ class AegisRuntime:
     pipeline: IncidentPipeline
     events: EventBus
     sink: InterventionSink
+    metrics: Metrics
+
+    def reset(self) -> None:
+        """Start a fresh incident without restarting the process.
+
+        The demo has to be runnable twice, and every piece of per-incident
+        state has to go -- not just the database. A reset that cleared the
+        store but left the governor's closed window and already-said set
+        would produce a second run in which AEGIS says nothing at all, which
+        looks exactly like a broken product and is the hardest failure to
+        diagnose while someone is watching.
+
+        Deliberately not a general "reload": configuration, the topology and
+        the wiring stay exactly as they are, so what a rehearsal proved about
+        the process remains true after this.
+        """
+        self.store.reset_incident()
+        self.governor.reset()
+        self.extraction.reset()
+        self.telemetry.reset()
+        self.metrics.reset()
+        _log.info("incident reset", incident_id=self.config.incident_id)
 
     def close(self) -> None:
         self.store.close()
@@ -80,6 +103,7 @@ def build_runtime(
 ) -> AegisRuntime:
     config = config or load_config()
 
+    metrics = Metrics()
     topology = build_incident_topology()
     telemetry = MockTelemetry(clock=clock)
     store = IncidentStateStore(
@@ -96,6 +120,7 @@ def build_runtime(
         known_targets=topology.nodes(),
         known_metrics=telemetry.metric_names,
         metric_aliases=telemetry.metric_aliases,
+        metrics=metrics,
     )
 
     resolved_sink = sink or RecordingSink(clock=clock)
@@ -109,6 +134,7 @@ def build_runtime(
         events=events,
         clock=clock,
         config=config.pipeline,
+        metrics=metrics,
     )
 
     return AegisRuntime(
@@ -121,4 +147,5 @@ def build_runtime(
         pipeline=pipeline,
         events=events,
         sink=resolved_sink,
+        metrics=metrics,
     )

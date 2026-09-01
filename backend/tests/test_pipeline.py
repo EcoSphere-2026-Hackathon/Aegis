@@ -9,6 +9,8 @@ pipeline to be provable before Agora is wired in.
 
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 from datetime import timedelta
 
@@ -16,14 +18,18 @@ from backend.common.clock import ManualClock
 from backend.common.config import AppConfig, GovernorConfig, load_config
 from backend.common.enums import (
     ClaimType,
+    DecisionStance,
+    EvidenceSource,
+    EvidenceSourceType,
+    ExtractionCertainty,
     HypothesisStatus,
     ProposedActionStatus,
     RiskFindingCode,
     RiskTier,
     SourceModality,
 )
+from backend.common.errors import InterventionError
 from backend.common.models import Evidence, TranscriptEvent
-from backend.common.enums import EvidenceSource, EvidenceSourceType, ExtractionCertainty
 from backend.pipeline.factory import build_runtime
 from backend.pipeline.sinks import FailingSink, RecordingSink
 from backend.tests.support import T0
@@ -368,6 +374,110 @@ class EvidenceIngestionTests(PipelineTestCase):
         self.assertEqual(len(self.spoken), before)
 
 
+class JustificationRetractionTests(PipelineTestCase):
+    """The reasoning property: retracting a belief re-opens what rested on it.
+
+    Every proposed action records the theory that justified it, so the store
+    holds a justification graph. Each check on its own is stateless; what
+    makes this a reasoning system is that invalidating a node re-examines its
+    dependents instead of leaving a stale conclusion standing.
+    """
+
+    def _propose_on_a_live_theory(self) -> None:
+        # Telemetry agrees, so the theory stands and the action built on it
+        # is genuinely low risk. AEGIS must be silent here -- if it warns now,
+        # the later escalation proves nothing.
+        self.rt.telemetry.set_value("error_rate", 12.0)
+        self.say("Error rate is around 12%, the retry storm is the cause.", uid="1002")
+        # search-index is a leaf: rolling it back breaks nothing downstream,
+        # so the *only* thing that could make this risky is the theory behind
+        # it. That isolates the property under test.
+        self.action = self.say("Let's roll back search-index then.", uid="1001")
+
+    def test_a_pending_action_is_re_raised_when_its_justification_collapses(self) -> None:
+        self._propose_on_a_live_theory()
+        self.assertFalse(self.action.spoke, "AEGIS warned before the theory was in doubt")
+        before = len(self.spoken)
+
+        # Reality moves. The theory dies -- and the rollback resting on it is
+        # still pending, still carrying a verdict computed against a belief
+        # nobody holds any more.
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        result = self.say("Error rate is down to 0.3% now.", uid="1002")
+
+        self.assertGreater(len(self.spoken), before, "the collapse passed unmentioned")
+        spoken = self.spoken[-1].lower()
+        self.assertTrue(
+            "root cause" in spoken or "contradicted" in spoken or "unconfirmed" in spoken,
+            spoken,
+        )
+        self.assertTrue(result.spoke, "the escalation was invisible to the turn result")
+
+    def test_the_re_evaluation_is_recorded_on_the_action_itself(self) -> None:
+        self._propose_on_a_live_theory()
+        action_id = next(
+            claim.claim_id
+            for claim in self.action.claims
+            if claim.type is ClaimType.PROPOSED_ACTION
+        )
+        first = self.rt.store.get_proposed_action(action_id)
+        self.assertIsNotNone(first.risk_verdict)
+        self.assertIs(first.risk_verdict.risk_tier, RiskTier.LOW)
+
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        self.say("Error rate is down to 0.3% now.", uid="1002")
+
+        after = self.rt.store.get_proposed_action(action_id)
+        self.assertIs(after.status, ProposedActionStatus.PENDING, "AEGIS altered the action")
+        self.assertGreater(
+            after.risk_verdict.risk_tier.rank,
+            first.risk_verdict.risk_tier.rank,
+            "the stored verdict still reflects the collapsed theory",
+        )
+        self.assertIn(RiskFindingCode.STALE_JUSTIFICATION, after.risk_verdict.codes)
+
+    def test_a_resolved_action_is_not_dragged_back_up(self) -> None:
+        # Humans already decided. Re-litigating it because a number moved
+        # would be AEGIS arguing with a decision that has been made.
+        self._propose_on_a_live_theory()
+        self.say("Yes, go ahead with the search-index rollback.", uid="1001")
+        before = len(self.spoken)
+
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        self.say("Error rate is down to 0.3% now.", uid="1002")
+
+        self.assertEqual(
+            self.rt.pipeline.metrics.snapshot()["counters"].get("reevaluations_escalated", 0),
+            0,
+        )
+        self.assertEqual(len(self.spoken), before)
+
+    def test_re_evaluation_does_not_cascade(self) -> None:
+        # Re-evaluating an action yields a verdict and nothing else. If it
+        # could touch a hypothesis it could re-trigger itself, and one
+        # telemetry reading could turn into an unbounded interrupt storm.
+        self._propose_on_a_live_theory()
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        before = len(self.spoken)
+        self.say("Error rate is down to 0.3% now.", uid="1002")
+
+        self.assertLessEqual(
+            len(self.spoken) - before, 1, "one collapse produced more than one interruption"
+        )
+
+    def test_an_unjustified_action_has_nothing_to_re_open(self) -> None:
+        self.say("Let's restart notification-service.", uid="1001")
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        before = len(self.spoken)
+        self.say("Error rate is down to 0.3% now.", uid="1002")
+        self.assertEqual(len(self.spoken), before)
+
+
 class TextModalityTests(PipelineTestCase):
     def test_typed_text_is_treated_exactly_like_speech(self) -> None:
         result = self.say("Pool utilization looks fine, like 40%.", uid="1002",
@@ -377,17 +487,259 @@ class TextModalityTests(PipelineTestCase):
         self.assertIs(claim.source_modality, SourceModality.TEXT)
 
 
+class DecisionLedgerTests(PipelineTestCase):
+    """A human decision belongs in the ledger whatever utterance carried it."""
+
+    def test_a_hold_spoken_as_a_reply_is_recorded_as_a_decision(self) -> None:
+        # It usually arrives this way -- as an answer to a pending action,
+        # not as a standalone announcement. A resolution that left no
+        # decision behind gave the reversal check nothing to read.
+        self.say("Let's restart search-index.")
+        self.say("No, hold off on that.", uid="1002")
+        decisions = self.rt.store.snapshot(captured_at=self.clock.now()).decisions
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].target_ref, "search-index")
+        self.assertIs(decisions[0].stance, DecisionStance.HOLD)
+        self.assertEqual(decisions[0].speaker_uid, "1002")
+
+    def test_reversing_that_hold_is_caught_on_a_low_risk_target(self) -> None:
+        # The point of the fix: on a target with no blast radius, nothing
+        # else would have spoken, so this reversal was silent.
+        self.say("Let's restart search-index.")
+        self.say("No, hold off on that.", uid="1002")
+        result = self.say("Let's restart search-index.", advance=25)
+        self.assertIn(RiskFindingCode.DECISION_REVERSAL, result.verdicts[0].codes)
+        self.assertTrue(result.spoke)
+
+    def test_a_confirmation_records_a_proceed_decision(self) -> None:
+        # Which is what stops AEGIS calling a later agreement a reversal.
+        self.say("Let's restart search-index.")
+        self.say("Yes, restart search-index.", uid="1002")
+        decisions = self.rt.store.snapshot(captured_at=self.clock.now()).decisions
+        self.assertIs(decisions[0].stance, DecisionStance.PROCEED)
+
+
+class IncidentResetTests(unittest.TestCase):
+    """The demo has to be runnable twice.
+
+    The default store is a file, so without a reset the second run starts
+    from the first one's pending actions, spent turn ids and -- worst -- the
+    governor's closed window and already-said set, which produce a run in
+    which AEGIS says nothing at all.
+    """
+
+    def _run_the_first_two_beats(self, rt, clock) -> tuple[str, ...]:
+        for index, text in enumerate(
+            (
+                "Payments are throwing 500s, seeing timeouts.",
+                "Pool utilization looks fine, like 40%.",
+            )
+        ):
+            clock.advance(5)
+            rt.pipeline.handle_transcript(
+                TranscriptEvent(
+                    uid="1001", turn_id=f"beat-{index}", role="human", text=text,
+                    final=True, timestamp=clock.now(),
+                    source_modality=SourceModality.VOICE,
+                )
+            )
+        return rt.sink.lines
+
+    def test_a_reset_empties_the_incident(self) -> None:
+        clock = ManualClock(start=T0)
+        rt = runtime(clock)
+        self.addCleanup(rt.close)
+        self._run_the_first_two_beats(rt, clock)
+        self.assertTrue(rt.store.timeline())
+
+        rt.reset()
+
+        view = rt.store.snapshot(captured_at=clock.now())
+        self.assertEqual(view.facts, ())
+        self.assertEqual(view.hypotheses, ())
+        self.assertEqual(view.proposed_actions, ())
+        self.assertEqual(rt.store.timeline(), ())
+        self.assertEqual(rt.store.interventions(), ())
+
+    def test_the_second_run_is_not_silent(self) -> None:
+        # The failure this exists to prevent, and the one that would be
+        # hardest to diagnose live: a reset that cleared the database but
+        # left the governor's window closed and its already-said set full.
+        clock = ManualClock(start=T0)
+        rt = runtime(clock)
+        self.addCleanup(rt.close)
+        first = self._run_the_first_two_beats(rt, clock)
+        self.assertTrue(first, "the first run said nothing, so this proves nothing")
+
+        rt.reset()
+        rt.sink.clear()
+        self.assertTrue(rt.governor.window_is_open(), "the window stayed closed")
+        self.assertEqual(rt.governor.voiced_memory_size, 0)
+
+        second = self._run_the_first_two_beats(rt, clock)
+        self.assertEqual(
+            list(second), list(first), "the second run did not reproduce the first"
+        )
+
+    def test_turn_ids_can_be_reused_after_a_reset(self) -> None:
+        # Idempotency is keyed on turn id. Without clearing it, replaying the
+        # same rehearsed script is indistinguishable from a duplicate feed.
+        clock = ManualClock(start=T0)
+        rt = runtime(clock)
+        self.addCleanup(rt.close)
+        self._run_the_first_two_beats(rt, clock)
+        rt.reset()
+        clock.advance(5)
+        result = rt.pipeline.handle_transcript(
+            TranscriptEvent(
+                uid="1001", turn_id="beat-0", role="human",
+                text="Payments are throwing 500s, seeing timeouts.", final=True,
+                timestamp=clock.now(), source_modality=SourceModality.VOICE,
+            )
+        )
+        self.assertFalse(result.duplicate)
+        self.assertTrue(result.claims)
+
+    def test_a_reset_forgets_moved_telemetry(self) -> None:
+        clock = ManualClock(start=T0)
+        rt = runtime(clock)
+        self.addCleanup(rt.close)
+        before = rt.telemetry.read("error_rate").value
+        rt.telemetry.set_value("error_rate", 99.0)
+        rt.reset()
+        self.assertEqual(rt.telemetry.read("error_rate").value, before)
+
+
+class LockScopeTests(unittest.TestCase):
+    """The state lock serialises state transitions. It must not be held
+    across anything slow, because everything else that touches state waits
+    behind it -- a screenshot submission, a status request, the next turn."""
+
+    class _SlowSink:
+        name = "slow"
+
+        def __init__(self, seconds: float = 0.6) -> None:
+            self.seconds = seconds
+            self.speaking = threading.Event()
+            self.lines: list[str] = []
+
+        def speak(self, text: str) -> None:
+            self.speaking.set()
+            time.sleep(self.seconds)
+            self.lines.append(text)
+
+    def test_the_state_lock_is_free_while_an_intervention_is_being_delivered(self) -> None:
+        # ``sink.speak`` is an HTTP call to Agora with an eight-second
+        # timeout. Under the lock, one stalled request freezes the pipeline
+        # for the whole timeout in the middle of a live incident.
+        clock = ManualClock(start=T0)
+        sink = self._SlowSink()
+        rt = runtime(clock, sink=sink)
+        self.addCleanup(rt.close)
+
+        def turn(text: str, turn_id: str) -> None:
+            clock.advance(5)
+            rt.pipeline.handle_transcript(
+                TranscriptEvent(
+                    uid="1001", turn_id=turn_id, role="human", text=text,
+                    final=True, timestamp=clock.now(),
+                    source_modality=SourceModality.VOICE,
+                )
+            )
+
+        speaker = threading.Thread(target=turn, args=("Let's rollback Core.", "slow-1"))
+        speaker.start()
+        self.addCleanup(speaker.join)
+
+        self.assertTrue(sink.speaking.wait(timeout=5), "the sink was never reached")
+        acquired = rt.pipeline._lock.acquire(timeout=0.25)
+        if acquired:
+            rt.pipeline._lock.release()
+        self.assertTrue(acquired, "the state lock was held across the speak call")
+
+    def test_the_intervention_is_still_delivered_and_recorded(self) -> None:
+        # Deferring delivery must not lose it.
+        clock = ManualClock(start=T0)
+        sink = self._SlowSink(seconds=0.0)
+        rt = runtime(clock, sink=sink)
+        self.addCleanup(rt.close)
+        clock.advance(5)
+        result = rt.pipeline.handle_transcript(
+            TranscriptEvent(
+                uid="1001", turn_id="slow-2", role="human", text="Let's rollback Core.",
+                final=True, timestamp=clock.now(), source_modality=SourceModality.VOICE,
+            )
+        )
+        self.assertTrue(result.spoke)
+        self.assertEqual(len(sink.lines), 1)
+        self.assertTrue(rt.store.interventions())
+
+    def test_one_failed_delivery_does_not_abandon_the_others(self) -> None:
+        class FlakySink:
+            name = "flaky"
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.delivered: list[str] = []
+
+            def speak(self, text: str) -> None:
+                self.calls += 1
+                if self.calls == 1:
+                    raise InterventionError("simulated first-delivery failure", sink=self.name)
+                self.delivered.append(text)
+
+        sink = FlakySink()
+        clock = ManualClock(start=T0)
+        rt = runtime(clock, sink=sink)
+        self.addCleanup(rt.close)
+        for index, text in enumerate(
+            ("Let's rollback Core.", "Pool utilization looks fine, like 40%.")
+        ):
+            clock.advance(50)
+            rt.pipeline.handle_transcript(
+                TranscriptEvent(
+                    uid="1001", turn_id=f"flaky-{index}", role="human", text=text,
+                    final=True, timestamp=clock.now(),
+                    source_modality=SourceModality.VOICE,
+                )
+            )
+        self.assertEqual(sink.calls, 2, "the second intervention was never attempted")
+        self.assertEqual(len(sink.delivered), 1)
+
+
 class ResilienceTests(PipelineTestCase):
     def test_duplicate_turn_ids_do_not_double_count(self) -> None:
+        # This used to assert only "at least one fact, and no crash", because
+        # deduplication lived in the HTTP handler and the pipeline itself
+        # genuinely did double-count. It now claims the turn id at the one
+        # entry point every transport shares, so the guarantee is exact.
         event = TranscriptEvent(uid="1001", turn_id="dup", role="human",
                                 text="Payments are throwing 500s.", final=True,
                                 timestamp=self.clock.now())
-        self.rt.pipeline.handle_transcript(event)
-        self.rt.pipeline.handle_transcript(event)
+        first = self.rt.pipeline.handle_transcript(event)
+        second = self.rt.pipeline.handle_transcript(event)
+
+        self.assertFalse(first.duplicate)
+        self.assertTrue(second.duplicate)
+        self.assertEqual(second.claims, ())
         facts = self.rt.store.snapshot(captured_at=self.clock.now()).facts
-        # The same utterance replayed produces claims with fresh ids, but the
-        # timeline must still be sane and nothing may crash.
-        self.assertGreaterEqual(len(facts), 1)
+        self.assertEqual(len(facts), 1, "a replayed utterance became two facts")
+
+    def test_an_interim_event_does_not_consume_its_turn_id(self) -> None:
+        # Interim transcripts share the final one's turn id. Claiming on the
+        # interim would make the final -- the only one that carries meaning --
+        # look like a duplicate and be dropped entirely.
+        interim = TranscriptEvent(uid="1001", turn_id="partial", role="human",
+                                  text="Payments are throw", final=False,
+                                  timestamp=self.clock.now())
+        self.rt.pipeline.handle_transcript(interim)
+        self.clock.advance(1)
+        final = TranscriptEvent(uid="1001", turn_id="partial", role="human",
+                                text="Payments are throwing 500s.", final=True,
+                                timestamp=self.clock.now())
+        result = self.rt.pipeline.handle_transcript(final)
+        self.assertFalse(result.duplicate)
+        self.assertTrue(result.claims)
 
     def test_out_of_order_events_are_ordered_by_timestamp_on_read(self) -> None:
         late = TranscriptEvent(uid="1001", turn_id="t-late", role="human",

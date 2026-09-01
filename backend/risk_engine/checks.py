@@ -26,6 +26,7 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 from backend.common.enums import (
     DecisionStance,
+    EvidenceSource,
     ExtractionCertainty,
     HypothesisStatus,
     RiskFindingCode,
@@ -46,7 +47,6 @@ from backend.risk_engine.policy import (
     StalenessPolicy,
 )
 from backend.risk_engine.topology import Topology
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -281,21 +281,72 @@ def _latest_decision_before(decisions: Sequence[Decision], action: ProposedActio
 
 
 def _has_new_evidence_since(
-    decision: Decision, action: ProposedAction, evidence: Sequence[Evidence]
+    decision: Decision,
+    action: ProposedAction,
+    evidence: Sequence[Evidence],
+    policy: MetricComparisonPolicy = DEFAULT_METRIC_POLICY,
 ) -> bool:
-    """Computed here, deliberately.
+    """Has anything actually changed since the team decided to hold?
 
-    The previous implementation took this as a caller-supplied dict, which
-    meant a risk determination was being made outside the risk engine. The
-    engine owns it now: evidence recorded between the decision and the
-    action, scoped to the same target where the evidence is scoped at all.
+    Computed here, deliberately. An earlier version took this as a
+    caller-supplied flag, which meant a risk determination was being made
+    outside the risk engine.
+
+    The subtlety that matters: AEGIS polls telemetry *as part of evaluating
+    this very action*. Treating that poll as "new evidence" would let every
+    decision reversal clear itself -- the system would fetch a metric because
+    someone proposed something, then cite its own fetch as the new
+    information justifying the proposal. Re-reading an unchanged number is
+    not new information.
+
+    So a reading only counts when it tells the room something it did not
+    already have:
+
+    * a human went and looked (a submitted screenshot), or
+    * the metric is one nobody had measured before the decision, or
+    * the value has materially moved since the decision.
     """
-    for item in evidence:
-        if not (decision.timestamp < item.timestamp <= action.timestamp):
+    # Strictly before the action, not up to and including it. Evidence AEGIS
+    # polls while evaluating this action is timestamped at or after the
+    # utterance, so a strict bound excludes it by construction rather than by
+    # depending on how the clock happens to tick. Anything the room actually
+    # saw before speaking lands strictly earlier and still counts.
+    relevant = [
+        item
+        for item in evidence
+        if decision.timestamp < item.timestamp < action.timestamp
+        and (item.target_ref is None or item.target_ref == action.target_ref)
+    ]
+    if not relevant:
+        return False
+
+    for item in relevant:
+        if item.source is EvidenceSource.SCREENSHOT_UPLOAD:
+            return True  # somebody actively went and checked
+
+        baseline = _reading_at_or_before(evidence, item.metric_name, decision.timestamp)
+        if baseline is None:
+            return True  # first measurement of this metric in the incident
+
+        current_value, baseline_value = item.numeric_value, baseline.numeric_value
+        if current_value is None or baseline_value is None:
+            if str(item.value) != str(baseline.value):
+                return True
             continue
-        if item.target_ref is None or item.target_ref == action.target_ref:
+        if policy.values_conflict(current_value, baseline_value):
             return True
+
     return False
+
+
+def _reading_at_or_before(
+    evidence: Sequence[Evidence], metric_name: str, moment
+) -> Optional[Evidence]:
+    """The most recent reading of a metric as of a point in time."""
+    candidates = [
+        item for item in evidence if item.metric_name == metric_name and item.timestamp <= moment
+    ]
+    return max(candidates, key=lambda item: item.timestamp) if candidates else None
 
 
 def _clip(text: str, limit: int = 60) -> str:
@@ -389,15 +440,35 @@ def check_blast_radius(action: ProposedAction, topology: Optional[Topology]) -> 
     versions = sorted({str(entry["requires_schema"]) for entry in broken})
     version_phrase = versions[0] if len(versions) == 1 else _join_names(versions)
 
+    # Direct breakage is only the first hop. Anything depending on a broken
+    # service is down too, and a failure that reaches an entry point is one a
+    # user sees rather than one a graph knows about.
+    propagation = topology.propagate_failure(names)
+
+    # The sentence is spoken over people who are already under pressure, and
+    # it competes for a 512-byte budget. So the direct breakage is named,
+    # and the cascade is *quantified* rather than enumerated: "4 more,
+    # including the user-facing api-gateway" lands in a way that reciting six
+    # service names does not. The full lists stay in `detail` for the UI and
+    # the logs, where there is room to read them.
+    message = (
+        f"{action.action_kind.value} of {action.target_ref} to {target_version} "
+        f"will break {_join_names(names)} — they're on schema {version_phrase}, "
+        f"incompatible with {target_version}"
+    )
+    if propagation.transitive:
+        cascade = len(propagation.transitive)
+        message += f", cascading to {cascade} more service{'' if cascade == 1 else 's'}"
+        if propagation.reaches_users:
+            message += f" including user-facing {_join_names(list(propagation.entry_points[:2]))}"
+    elif propagation.reaches_users:
+        message += f" — {_join_names(list(propagation.entry_points[:2]))} is user-facing"
+
     return [
         RiskFinding(
             code=RiskFindingCode.BLAST_RADIUS_SCHEMA_BREAK,
             tier=RiskTier.HIGH,
-            message=(
-                f"{action.action_kind.value} of {action.target_ref} to {target_version} "
-                f"will break {_join_names(names)} — they're on schema {version_phrase}, "
-                f"incompatible with {target_version}"
-            ),
+            message=message,
             subject_claim_id=action.claim_id,
             related_ids=tuple(names),
             detail={
@@ -405,6 +476,11 @@ def check_blast_radius(action: ProposedAction, topology: Optional[Topology]) -> 
                 "target_schema_version": target_version,
                 "version_source": "utterance" if action.target_schema_version else "topology",
                 "affected": broken,
+                "direct_breakage": list(propagation.direct),
+                "transitive_breakage": list(propagation.transitive),
+                "entry_points_affected": list(propagation.entry_points),
+                "total_services_affected": propagation.total,
+                "reaches_users": propagation.reaches_users,
             },
         )
     ]

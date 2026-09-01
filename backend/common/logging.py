@@ -100,7 +100,7 @@ def _json_default(value: Any) -> str:
     if isinstance(value, Path):
         return str(value)
     if hasattr(value, "value") and hasattr(value, "name"):  # Enum
-        return str(getattr(value, "value"))
+        return str(value.value)
     return repr(value)
 
 

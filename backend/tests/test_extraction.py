@@ -34,12 +34,14 @@ class ScriptedProvider:
         self._responses = list(responses) or ["{}"]
         self._fail_times = fail_times
         self.calls = 0
+        self.last_request: ProviderRequest | None = None
 
     def supports_vision(self) -> bool:
         return False
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         self.calls += 1
+        self.last_request = request
         if self.calls <= self._fail_times:
             raise ProviderError("simulated provider failure", provider=self.name)
         index = min(self.calls - self._fail_times, len(self._responses)) - 1
@@ -286,6 +288,54 @@ class DeterministicProviderTests(unittest.TestCase):
                       DecisionStance.HOLD)
         self.assertEqual(decision.target_ref, "core-db")
 
+    def test_inflected_hold_is_recorded_with_the_right_polarity(self) -> None:
+        """Regression: "holding off" is a hold.
+
+        A substring list containing "hold off" misses it, because the word in
+        the sentence is "holding" -- and the decision then lands in the
+        ledger with the opposite stance, so the reversal check never fires on
+        the failure mode it exists to catch.
+        """
+        for phrasing in (
+            "We're holding off on the core-db rollback for now.",
+            "We'll hold on the core-db rollback.",
+            "We're not touching core-db.",
+            "Let's hold off on core-db.",
+        ):
+            with self.subTest(phrasing=phrasing):
+                claims = self.extract_one(phrasing)
+                decision = next(c for c in claims if c.type is ClaimType.DECISION)
+                self.assertIs(decision.decision_stance, DecisionStance.HOLD, phrasing)
+
+    def test_a_go_ahead_decision_keeps_the_proceed_stance(self) -> None:
+        claims = self.extract_one("Agreed, we're going with the core-db rollback.")
+        decision = next(c for c in claims if c.type is ClaimType.DECISION)
+        self.assertIs(decision.decision_stance, DecisionStance.PROCEED)
+
+    def test_a_split_verb_particle_is_still_a_rollback(self) -> None:
+        """Regression: people say "roll core-db back", not "roll back core-db".
+
+        Missing the kind is not cosmetic -- the schema-compatibility check
+        only runs for actions that change a schema surface, so an
+        unrecognised rollback is a blast radius nobody checks.
+        """
+        for phrasing in (
+            "Let's roll core-db back anyway.",
+            "Let's roll back core-db.",
+            "Let's rollback core-db.",
+            "We should revert core-db.",
+        ):
+            with self.subTest(phrasing=phrasing):
+                claims = self.extract_one(phrasing)
+                action = next(c for c in claims if c.type is ClaimType.PROPOSED_ACTION)
+                self.assertIs(action.action_kind, ActionKind.ROLLBACK, phrasing)
+
+    def test_benign_no_phrases_are_not_read_as_refusals(self) -> None:
+        claims = self.service.extract(
+            transcript("no problem, that works for me"), pending_action_targets=("core-db",)
+        ).claims
+        self.assertNotIn(ClaimType.OVERRIDE, [claim.type for claim in claims])
+
     def test_filler_is_classified_as_none(self) -> None:
         self.assertIs(self.extract_one("okay")[0].type, ClaimType.NONE)
 
@@ -297,6 +347,172 @@ class DeterministicProviderTests(unittest.TestCase):
         outcome = self.service.extract(transcript("Let's rollback Core"))
         self.assertEqual(outcome.provider, "deterministic")
         self.assertEqual(outcome.rejected, ())
+
+
+class FastPathTests(unittest.TestCase):
+    """Acknowledgements are most of what people say and none of what matters.
+
+    Sending them to a model costs a round trip on the critical path for a
+    guaranteed empty answer, so they are answered locally -- but only when
+    they are *unambiguously* content-free.
+    """
+
+    def setUp(self) -> None:
+        self.provider = ScriptedProvider('{"claims": []}')
+        self.service = service_with(self.provider)
+
+    def test_a_backchannel_never_reaches_the_provider(self) -> None:
+        for filler in ("mm", "uh huh", "yeah", "okay", "right, sure", "Mhm."):
+            with self.subTest(filler=filler):
+                outcome = self.service.extract(transcript(filler))
+                self.assertEqual(outcome.provider, "fast_path")
+                self.assertIs(outcome.claims[0].type, ClaimType.NONE)
+        self.assertEqual(self.provider.calls, 0, "the model was consulted about filler")
+
+    def test_the_fast_path_still_produces_a_well_formed_claim(self) -> None:
+        # Downstream code reads provenance off every claim; a short-circuit
+        # that returned a differently-shaped claim would be a latent crash.
+        claim = self.service.extract(transcript("yeah", uid="2002", turn="t-9")).claims[0]
+        self.assertEqual(claim.speaker_uid, "2002")
+        self.assertEqual(claim.source_turn_id, "t-9")
+
+    def test_agreement_carrying_content_is_not_short_circuited(self) -> None:
+        # "yeah, go ahead" while something is pending is a confirmation. The
+        # fast path must not swallow it -- that would be an authorisation bug.
+        for utterance in ("yeah, go ahead with the rollback", "okay, roll back core-db"):
+            with self.subTest(utterance=utterance):
+                self.provider.calls = 0
+                outcome = self.service.extract(
+                    transcript(utterance), pending_action_targets=("core-db",)
+                )
+                self.assertNotEqual(outcome.provider, "fast_path")
+                self.assertEqual(self.provider.calls, 1)
+
+    def test_the_fast_path_still_feeds_conversational_context(self) -> None:
+        # Filler carries no claim but it is still a turn; dropping it from the
+        # rolling window would misalign the context the model sees next.
+        self.service.extract(transcript("okay"))
+        self.service.extract(transcript("Let's rollback core-db."))
+        prompt = self.provider.last_request.user_prompt
+        self.assertIn("okay", prompt)
+
+
+class ExtractionCacheTests(unittest.TestCase):
+    """Short utterances repeat constantly in a war room. Caching them is only
+    safe if the cached thing is the model's *answer*, not the finished claim."""
+
+    def setUp(self) -> None:
+        self.provider = ScriptedProvider(
+            json.dumps(
+                {
+                    "claims": [
+                        {
+                            "type": "hypothesis",
+                            "text": "the pool is saturated",
+                            "confidence": "medium",
+                        }
+                    ]
+                }
+            )
+        )
+        self.service = service_with(self.provider)
+
+    def test_a_repeated_short_utterance_is_answered_from_cache(self) -> None:
+        first = self.service.extract(transcript("pool is saturated", turn="t-1"))
+        second = self.service.extract(transcript("pool is saturated", turn="t-2"))
+        self.assertEqual(self.provider.calls, 1)
+        self.assertEqual(first.provider, "scripted")
+        self.assertEqual(second.provider, "cache")
+
+    def test_a_cache_hit_re_derives_provenance_from_the_new_event(self) -> None:
+        # The red line: a cached claim must never carry the speaker or turn of
+        # the utterance that populated the entry, or the ledger attributes one
+        # person's words to another.
+        self.service.extract(transcript("pool is saturated", uid="1001", turn="t-1", when=0))
+        second = self.service.extract(
+            transcript("pool is saturated", uid="4004", turn="t-2", when=30)
+        )
+        claim = second.claims[0]
+        self.assertEqual(claim.speaker_uid, "4004")
+        self.assertEqual(claim.source_turn_id, "t-2")
+        self.assertEqual(claim.text, "the pool is saturated")
+
+    def test_the_same_words_are_not_shared_across_different_pending_context(self) -> None:
+        # "go ahead" means something different when an action is awaiting a
+        # decision. Keying on words alone would serve a confirmation into a
+        # context where nothing was proposed.
+        self.service.extract(transcript("go ahead"))
+        self.service.extract(transcript("go ahead"), pending_action_targets=("core-db",))
+        self.assertEqual(self.provider.calls, 2)
+
+    def test_the_pending_set_is_matched_as_a_set_not_a_sequence(self) -> None:
+        # Regression, found by the benchmark: keying on the ordered tuple made
+        # the cache miss on every reordering of the pending list, so its hit
+        # rate collapsed in exactly the long incidents it exists for.
+        self.service.extract(
+            transcript("pool is saturated", turn="t-1"),
+            pending_action_targets=("core-db", "payment-api"),
+        )
+        second = self.service.extract(
+            transcript("pool is saturated", turn="t-2"),
+            pending_action_targets=("payment-api", "core-db"),
+        )
+        self.assertEqual(second.provider, "cache")
+        self.assertEqual(self.provider.calls, 1)
+
+    def test_a_genuinely_different_pending_set_still_misses(self) -> None:
+        self.service.extract(
+            transcript("go ahead", turn="t-1"), pending_action_targets=("core-db",)
+        )
+        self.service.extract(
+            transcript("go ahead", turn="t-2"), pending_action_targets=("core-db", "payment-api")
+        )
+        self.assertEqual(self.provider.calls, 2)
+
+    def test_long_utterances_are_not_cached(self) -> None:
+        long_text = "the connection pool on core-db looks saturated to me right now honestly"
+        self.service.extract(transcript(long_text, turn="t-1"))
+        self.service.extract(transcript(long_text, turn="t-2"))
+        self.assertEqual(self.provider.calls, 2)
+        self.assertEqual(self.service.cache_size, 0)
+
+    def test_the_cache_is_bounded_and_evicts_least_recently_used(self) -> None:
+        service = service_with(ScriptedProvider('{"claims": []}'), cache_size=2)
+        for index in range(3):
+            service.extract(transcript(f"phrase {index}"))
+        self.assertLessEqual(service.cache_size, 2)
+
+    def test_the_cache_survives_concurrent_extraction(self) -> None:
+        # Extraction runs outside the pipeline lock so a slow provider cannot
+        # stall state transitions; that is exactly what makes this structure
+        # reachable from more than one thread.
+        import threading
+
+        service = service_with(ScriptedProvider('{"claims": []}'), cache_size=8)
+        errors: list[BaseException] = []
+
+        def hammer(worker: int) -> None:
+            try:
+                for index in range(50):
+                    service.extract(transcript(f"phrase {index % 12}", turn=f"w{worker}-{index}"))
+            except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised
+                errors.append(exc)
+
+        threads = [threading.Thread(target=hammer, args=(worker,)) for worker in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertLessEqual(service.cache_size, 8)
+
+    def test_caching_can_be_disabled_entirely(self) -> None:
+        provider = ScriptedProvider('{"claims": []}')
+        service = service_with(provider, cache_size=0)
+        service.extract(transcript("pool is saturated", turn="t-1"))
+        service.extract(transcript("pool is saturated", turn="t-2"))
+        self.assertEqual(provider.calls, 2)
 
 
 if __name__ == "__main__":

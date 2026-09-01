@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AEGIS — Incident Commander</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <h1>AEGIS</h1>
+        <p>Incident Commander</p>
+      </div>
+    </div>
+
+    <div class="status-cluster">
+      <div class="status-chip" id="listening-chip" data-state="idle">
+        <span class="pulse" aria-hidden="true"></span>
+        <span class="status-label">Listening</span>
+      </div>
+      <div class="status-chip" id="window-chip" data-state="open" title="Interventions are hard-limited to one per window">
+        <span class="chip-key">Window</span>
+        <span class="chip-value" id="window-value">open</span>
+      </div>
+      <div class="status-chip" id="provider-chip" title="Which extractor produced the claims in this run">
+        <span class="chip-key">Extractor</span>
+        <span class="chip-value" id="provider-value">—</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- ── conversation ─────────────────────────────────────────────── -->
+    <section class="panel panel-conversation" aria-labelledby="conversation-title">
+      <div class="panel-head">
+        <h2 id="conversation-title">Conversation</h2>
+        <span class="count" id="turn-count">0 turns</span>
+      </div>
+      <div class="stream" id="conversation" role="log" aria-live="polite">
+        <div class="empty" id="conversation-empty">
+          <p class="empty-title">Nothing said yet</p>
+          <p class="empty-body">Transcripts appear here as people speak. AEGIS stays silent unless something needs saying.</p>
+        </div>
+      </div>
+      <form class="composer" id="text-form" autocomplete="off">
+        <input type="text" id="text-input" placeholder="Type a note into the incident…" aria-label="Typed note" />
+        <button type="submit" class="btn btn-primary">Send</button>
+      </form>
+    </section>
+
+    <!-- ── incident state ───────────────────────────────────────────── -->
+    <section class="panel panel-state" aria-labelledby="state-title">
+      <div class="panel-head">
+        <h2 id="state-title">Incident state</h2>
+        <button class="btn btn-ghost btn-sm" id="refresh-btn" type="button">Refresh</button>
+      </div>
+
+      <div class="state-scroll">
+        <div class="state-group" data-group="hypotheses">
+          <div class="group-head">
+            <h3>Theories</h3>
+            <span class="count" id="hypotheses-count">0</span>
+          </div>
+          <ul class="items" id="hypotheses"></ul>
+          <p class="group-empty" id="hypotheses-empty">No theories on record.</p>
+        </div>
+
+        <div class="state-group" data-group="facts">
+          <div class="group-head">
+            <h3>Facts</h3>
+            <span class="count" id="facts-count">0</span>
+          </div>
+          <ul class="items" id="facts"></ul>
+          <p class="group-empty" id="facts-empty">Nothing established yet.</p>
+        </div>
+
+        <div class="state-group" data-group="decisions">
+          <div class="group-head">
+            <h3>Decision ledger</h3>
+            <span class="count" id="decisions-count">0</span>
+          </div>
+          <ul class="items" id="decisions"></ul>
+          <p class="group-empty" id="decisions-empty">Nothing decided yet.</p>
+        </div>
+
+        <div class="state-group" data-group="actions">
+          <div class="group-head">
+            <h3>Proposed actions</h3>
+            <span class="count" id="actions-count">0</span>
+          </div>
+          <ul class="items" id="actions"></ul>
+          <p class="group-empty" id="actions-empty">Nothing proposed yet.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── interventions ────────────────────────────────────────────── -->
+    <section class="panel panel-interventions" aria-labelledby="interventions-title">
+      <div class="panel-head">
+        <h2 id="interventions-title">Interventions</h2>
+        <span class="count" id="interventions-count">0</span>
+      </div>
+      <div class="stream" id="interventions">
+        <div class="empty">
+          <p class="empty-title">Silent</p>
+          <p class="empty-body">Every intervention AEGIS makes is recorded here with the exact rule it caught.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── evidence ─────────────────────────────────────────────────── -->
+    <section class="panel panel-evidence" aria-labelledby="evidence-title">
+      <div class="panel-head">
+        <h2 id="evidence-title">Evidence</h2>
+        <span class="count" id="evidence-count">0</span>
+      </div>
+      <ul class="metrics" id="metrics"></ul>
+      <details class="submit-evidence">
+        <summary>Submit a reading</summary>
+        <form id="evidence-form" class="evidence-form" autocomplete="off">
+          <label>
+            <span>Metric</span>
+            <select id="evidence-metric"></select>
+          </label>
+          <label>
+            <span>Value</span>
+            <input type="text" id="evidence-value" placeholder="91" />
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="evidence-uncertain" />
+            <span>Reading was unclear</span>
+          </label>
+          <button type="submit" class="btn btn-primary btn-sm">Submit</button>
+        </form>
+      </details>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span id="connection" class="conn" data-state="connecting">connecting…</span>
+    <span class="sep">·</span>
+    <span>AEGIS never executes, blocks or overrides an action. Every consequential step needs an explicit human decision.</span>
+  </footer>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

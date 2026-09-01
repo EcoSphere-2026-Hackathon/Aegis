@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import unittest
 
+import networkx as nx
+from pydantic import ValidationError
+
 from backend.common.enums import (
     ActionKind,
     DecisionStance,
@@ -30,7 +33,6 @@ from backend.risk_engine.topology import (
     build_incident_topology,
 )
 from backend.tests.support import (
-    at,
     make_action,
     make_decision,
     make_hypothesis,
@@ -38,8 +40,6 @@ from backend.tests.support import (
     make_visual_evidence,
     snapshot,
 )
-
-import networkx as nx
 
 
 class TopologyTests(unittest.TestCase):
@@ -98,6 +98,63 @@ class TopologyTests(unittest.TestCase):
         graph.add_edge("x", "y", key="reads_schema", edge_type="reads_schema", schema_version="v1")
         with self.assertRaises(ConfigError):
             Topology(graph)
+
+
+class FailurePropagationTests(unittest.TestCase):
+    """Direct breakage is the first hop, not the blast radius."""
+
+    def setUp(self) -> None:
+        self.topology = build_incident_topology()
+
+    def test_failure_spreads_to_everything_downstream(self) -> None:
+        propagation = self.topology.propagate_failure(["payment-api"])
+        self.assertIn("payment-api", propagation.direct)
+        # billing depends on payment-api; notification depends on billing.
+        self.assertIn("billing-service", propagation.transitive)
+        self.assertIn("notification-service", propagation.transitive)
+        self.assertIn("api-gateway", propagation.transitive)
+
+    def test_multi_source_propagation_counts_shared_dependents_once(self) -> None:
+        propagation = self.topology.propagate_failure(["payment-api", "auth-service"])
+        self.assertEqual(len(propagation.all_affected), len(set(propagation.all_affected)))
+        # api-gateway depends on both and must appear exactly once.
+        self.assertEqual(list(propagation.transitive).count("api-gateway"), 1)
+
+    def test_entry_points_are_identified_separately(self) -> None:
+        propagation = self.topology.propagate_failure(["payment-api"])
+        self.assertTrue(propagation.reaches_users)
+        self.assertIn("api-gateway", propagation.entry_points)
+        # core-db is depended upon, so it is never an entry point.
+        self.assertFalse(self.topology.is_entry_point("core-db"))
+        self.assertTrue(self.topology.is_entry_point("api-gateway"))
+
+    def test_a_leaf_failure_has_no_cascade(self) -> None:
+        propagation = self.topology.propagate_failure(["search-index"])
+        self.assertEqual(propagation.transitive, ())
+        self.assertEqual(propagation.total, 1)
+
+    def test_propagation_terminates_on_a_cycle(self) -> None:
+        graph = nx.MultiDiGraph()
+        for source, target in (("a", "b"), ("b", "c"), ("c", "a")):
+            graph.add_edge(source, target, key="depends_on", edge_type="depends_on")
+        propagation = Topology(graph).propagate_failure(["a"])
+        self.assertEqual(set(propagation.all_affected), {"a", "b", "c"})
+
+    def test_unknown_nodes_are_ignored_rather_than_raising(self) -> None:
+        self.assertEqual(self.topology.propagate_failure(["nope"]).total, 0)
+
+    def test_the_blast_radius_finding_reports_the_full_consequence(self) -> None:
+        action = make_action(target_schema_version=GOLDEN_DEMO_ROLLBACK_TARGET_SCHEMA)
+        verdict = evaluate(action, snapshot(), self.topology)
+        finding = next(f for f in verdict.findings if f.code is RiskFindingCode.BLAST_RADIUS_SCHEMA_BREAK)
+
+        self.assertEqual(set(finding.detail["direct_breakage"]), {"payment-api", "auth-service"})
+        self.assertGreater(finding.detail["total_services_affected"], 2)
+        self.assertTrue(finding.detail["reaches_users"])
+        # The spoken form quantifies the cascade rather than reciting it,
+        # because six service names do not survive being said out loud.
+        self.assertIn("cascading to", finding.message)
+        self.assertLessEqual(len(finding.message.encode("utf-8")), 320)
 
 
 class StalenessCheckTests(unittest.TestCase):
@@ -196,6 +253,55 @@ class DecisionReversalCheckTests(unittest.TestCase):
         verdict = evaluate(action, snapshot(decisions=[decision]))
         self.assertEqual(verdict.risk_tier, RiskTier.MEDIUM)
         self.assertIn(RiskFindingCode.DECISION_REVERSAL, verdict.codes)
+
+    def test_the_engines_own_telemetry_poll_does_not_clear_a_reversal(self) -> None:
+        """Regression: AEGIS cannot cite its own lookup as new information.
+
+        Evaluating a proposed action triggers a telemetry read. If that read
+        counted as "new evidence since the decision", every reversal would
+        clear itself -- the system fetches a metric *because* someone
+        proposed something, then treats the fetch as grounds for the
+        proposal. The reading has to predate the action to count.
+        """
+        decision = make_decision(stance=DecisionStance.HOLD, when=5)
+        action = make_action(when=50, action_kind=ActionKind.RESTART, target_schema_version=None)
+        polled_during_evaluation = make_telemetry(when=50, target_ref="core-db")
+        verdict = evaluate(
+            action, snapshot(decisions=[decision]), None, [polled_during_evaluation]
+        )
+        self.assertIn(RiskFindingCode.DECISION_REVERSAL, verdict.codes)
+
+    def test_an_unchanged_reading_is_not_new_information(self) -> None:
+        decision = make_decision(stance=DecisionStance.HOLD, when=10)
+        action = make_action(when=60, action_kind=ActionKind.RESTART, target_schema_version=None)
+        evidence = [
+            make_telemetry(value=91, when=5, target_ref="core-db"),   # before the decision
+            make_telemetry(value=91, when=30, target_ref="core-db"),  # same number, later
+        ]
+        verdict = evaluate(action, snapshot(decisions=[decision]), None, evidence)
+        self.assertIn(RiskFindingCode.DECISION_REVERSAL, verdict.codes)
+
+    def test_a_materially_changed_reading_is_new_information(self) -> None:
+        decision = make_decision(stance=DecisionStance.HOLD, when=10)
+        action = make_action(when=60, action_kind=ActionKind.RESTART, target_schema_version=None)
+        evidence = [
+            make_telemetry(value=91, when=5, target_ref="core-db"),
+            make_telemetry(value=38, when=30, target_ref="core-db"),  # the world moved
+        ]
+        verdict = evaluate(action, snapshot(decisions=[decision]), None, evidence)
+        self.assertNotIn(RiskFindingCode.DECISION_REVERSAL, verdict.codes)
+
+    def test_a_human_submitted_reading_is_always_new_information(self) -> None:
+        # Somebody went and looked. That is new, even at the same value.
+        decision = make_decision(stance=DecisionStance.HOLD, when=10)
+        action = make_action(when=60, action_kind=ActionKind.RESTART, target_schema_version=None)
+        evidence = [
+            make_telemetry(value=91, when=5, target_ref="core-db"),
+            make_visual_evidence(value=91, when=30, certainty=ExtractionCertainty.HIGH,
+                                 target_ref="core-db"),
+        ]
+        verdict = evaluate(action, snapshot(decisions=[decision]), None, evidence)
+        self.assertNotIn(RiskFindingCode.DECISION_REVERSAL, verdict.codes)
 
     def test_decision_made_after_the_action_is_ignored(self) -> None:
         decision = make_decision(stance=DecisionStance.HOLD, when=30)
@@ -437,7 +543,11 @@ class VerdictContractTests(unittest.TestCase):
             RiskVerdict(risk_tier=RiskTier.HIGH, findings=(finding,))
 
     def test_a_finding_cannot_be_low_tier(self) -> None:
-        with self.assertRaises(Exception):
+        # A LOW "finding" is a contradiction in terms: findings are the
+        # reasons an intervention exists. Asserting the specific validation
+        # error matters -- a blind assertRaises would also pass if the
+        # constructor failed for an unrelated reason.
+        with self.assertRaises(ValidationError):
             RiskFinding(code=RiskFindingCode.STALE_JUSTIFICATION, tier=RiskTier.LOW, message="x")
 
     def test_every_non_low_verdict_explains_itself(self) -> None:

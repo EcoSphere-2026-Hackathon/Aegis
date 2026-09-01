@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 import networkx as nx
 
@@ -64,6 +64,33 @@ class DependencyPath:
 
     def render(self) -> str:
         return " -> ".join(self.nodes)
+
+
+@dataclass(frozen=True)
+class FailurePropagation:
+    """The full consequence set of a change, split by how it is reached.
+
+    ``direct`` broke because of the change itself. ``transitive`` broke
+    because they depend on something in ``direct``. ``entry_points`` are the
+    subset of everything affected that sits at the edge of the system, which
+    is what turns an internal degradation into a user-visible outage.
+    """
+
+    direct: tuple[str, ...]
+    transitive: tuple[str, ...]
+    entry_points: tuple[str, ...]
+
+    @property
+    def all_affected(self) -> tuple[str, ...]:
+        return tuple(sorted(set(self.direct) | set(self.transitive)))
+
+    @property
+    def total(self) -> int:
+        return len(self.all_affected)
+
+    @property
+    def reaches_users(self) -> bool:
+        return bool(self.entry_points)
 
 
 class Topology:
@@ -205,6 +232,59 @@ class Topology:
         """Is ``dependent`` declared compatible across this version change?"""
         declared = self.declared_compatible_versions(dependent, source)
         return from_version in declared and to_version in declared
+
+    def propagate_failure(self, broken: Sequence[str]) -> "FailurePropagation":
+        """Given a set of directly-broken services, what else stops working?
+
+        The first version of this check reported only the services that read
+        the changed schema. That is the *direct* breakage, not the blast
+        radius: if payment-api breaks, billing-service — which depends on
+        payment-api and never touched the schema — is down too. Reporting two
+        casualties when the real number is five is not a rounding error in a
+        product whose entire job is telling people what an action will cost.
+
+        So this is a second traversal: a reverse BFS from the broken set over
+        ``depends_on``, which is exactly a reachability query on the transpose
+        graph. Multi-source, so shared downstream services are visited once
+        and the whole thing stays O(V+E) regardless of how many services
+        break directly.
+
+        Entry points — nodes nothing depends on — are called out separately.
+        They are the edge of the system, so a failure that reaches one is a
+        failure a user sees, and "this takes down the API gateway" is a
+        materially different sentence from "this degrades an internal
+        service".
+        """
+        direct = tuple(node for node in broken if node in self._graph)
+        if not direct:
+            return FailurePropagation(direct=(), transitive=(), entry_points=())
+
+        seen = set(direct)
+        frontier: deque[str] = deque(direct)
+        transitive: list[str] = []
+
+        while frontier:
+            current = frontier.popleft()
+            for dependent in self._reverse_depends_on.get(current, ()):
+                if dependent in seen:
+                    continue
+                seen.add(dependent)
+                transitive.append(dependent)
+                frontier.append(dependent)
+
+        affected = set(direct) | set(transitive)
+        entry_points = tuple(sorted(node for node in affected if self.is_entry_point(node)))
+
+        return FailurePropagation(
+            direct=tuple(sorted(direct)),
+            transitive=tuple(sorted(transitive)),
+            entry_points=entry_points,
+        )
+
+    def is_entry_point(self, node: str) -> bool:
+        """Nothing depends on this node, so it is where the system meets its
+        users. Used to weight a blast radius by whether it surfaces."""
+        return not self._reverse_depends_on.get(node, ())
 
     def current_schema_version(self, node: str) -> Optional[str]:
         if node not in self._graph:

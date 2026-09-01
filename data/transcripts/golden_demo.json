@@ -1,0 +1,73 @@
+{
+  "name": "golden_demo",
+  "description": "The rehearsed demo path. Two engineers on a live bridge; AEGIS silent until it has something specific to say, then two distinct catches — a claim contradicted by reality, and a destructive action with a blast radius resting on an unconfirmed theory.",
+  "participants": {
+    "1001": "Engineer A",
+    "1002": "Engineer B"
+  },
+  "turns": [
+    {
+      "beat": 1,
+      "uid": "1001",
+      "advance_seconds": 5,
+      "text": "Payments are throwing 500s, seeing timeouts.",
+      "expect": {
+        "claim_types": ["fact"],
+        "intervenes": false,
+        "why": "Ordinary incident chatter. Speaking here would be the false positive that trains people to ignore the system."
+      }
+    },
+    {
+      "beat": 2,
+      "uid": "1002",
+      "advance_seconds": 5,
+      "text": "Pool utilization looks fine, like 40%.",
+      "expect": {
+        "claim_types": ["hypothesis"],
+        "intervenes": true,
+        "risk_tier": "HIGH",
+        "codes": ["evidence_contradiction"],
+        "contains": ["91", "40"],
+        "why": "First killer moment: a figure recited from impression, contradicted by what the system actually reports. This is grounding against reality, not against the rest of the conversation."
+      }
+    },
+    {
+      "beat": 4,
+      "uid": "1001",
+      "advance_seconds": 50,
+      "text": "Okay, fine, it is the pool then. Let's rollback Core to the last version.",
+      "expect": {
+        "claim_types": ["hypothesis", "proposed_action"],
+        "intervenes": true,
+        "risk_tier": "HIGH",
+        "codes": ["blast_radius_schema_break", "stale_justification"],
+        "contains": ["payment-api", "auth-service", "v17", "v2.3"],
+        "why": "Second killer moment, and a different capability: a compound catch. The root cause was contradicted and never re-established, and the rollback breaks two dependents on an incompatible schema. Note nobody said 'v2.3' — that came from the topology."
+      }
+    },
+    {
+      "beat": 7,
+      "uid": "1002",
+      "advance_seconds": 5,
+      "text": "Hold — don't rollback, let's check the pool metrics properly first.",
+      "expect": {
+        "claim_types": ["hold"],
+        "resolves_action": true,
+        "resolution_status": "held",
+        "intervenes": false,
+        "why": "The human decides. AEGIS records who held it and stops arguing."
+      }
+    },
+    {
+      "beat": 8,
+      "uid": "1001",
+      "advance_seconds": 50,
+      "text": "AEGIS, status?",
+      "expect": {
+        "intervenes": true,
+        "contains": ["Status", "unconfirmed"],
+        "why": "On-demand summary, built from accumulated state rather than by re-reading the transcript. Open theories are voiced as unconfirmed — speaking a hypothesis as settled fact is a hard fail."
+      }
+    }
+  ]
+}

@@ -46,11 +46,7 @@ from backend.common.enums import (
     RiskTier,
     SourceModality,
 )
-from backend.common.errors import (
-    EntityNotFoundError,
-    IllegalStateTransitionError,
-    StateStoreError,
-)
+from backend.common.errors import EntityNotFoundError, IllegalStateTransitionError
 from backend.common.logging import STAGE_STATE_MUTATED, get_logger
 from backend.common.models import (
     Decision,
@@ -84,6 +80,14 @@ class IncidentStateStore:
     def __init__(self, database_path: Path | str = ":memory:", *, incident_id: str = "incident-local") -> None:
         self._incident_id = incident_id
         self._lock = threading.RLock()
+        # Bumped on every successful mutation. The console re-reads state
+        # after each event, and almost all of those reads return something it
+        # already has; a version counter turns them into 304s instead of a
+        # full re-serialisation of the incident.
+        self._version = 0
+        # Turn ids already ingested, so a retried delivery is a no-op rather
+        # than a second copy of the same utterance.
+        self._seen_turn_ids: set[str] = set()
 
         path = str(database_path)
         if path != ":memory:":
@@ -108,6 +112,69 @@ class IncidentStateStore:
     @property
     def incident_id(self) -> str:
         return self._incident_id
+
+    @property
+    def version(self) -> int:
+        """Monotonic state version, cheap enough to read on every request."""
+        with self._lock:
+            return self._version
+
+    def claim_turn(self, turn_id: str) -> bool:
+        """Reserve a turn id for processing.
+
+        Returns False if this turn has already been ingested. Transport
+        retries are normal -- a browser relaying RTM resends on a dropped
+        response -- and without this the same utterance becomes two claims
+        with *different* ids, which no downstream idempotency can collapse
+        precisely because the ids genuinely differ. Deduplicating has to
+        happen at the boundary, on the one identifier the transport
+        preserves.
+        """
+        with self._lock:
+            if turn_id in self._seen_turn_ids:
+                return False
+            self._seen_turn_ids.add(turn_id)
+            return True
+
+    def reset_incident(self) -> None:
+        """Empty the incident, keeping the schema.
+
+        Exists for one reason and it is not tidiness: the demo has to be
+        runnable twice. The database is a file by default, so a second run
+        inherits the first one's pending actions, stale theories and spent
+        turn ids -- which is exactly the state in which the rehearsed script
+        stops behaving as rehearsed, in front of whoever is watching.
+
+        Deleting rows rather than the file keeps the schema, the migrations
+        and any open connection valid, so this is safe to call on a live
+        server between takes.
+        """
+        with self._transaction() as conn:
+            for table in (
+                "timeline",
+                "interventions",
+                "evidence",
+                "proposed_actions",
+                "decisions",
+                "hypotheses",
+                "facts",
+            ):
+                conn.execute(f"DELETE FROM {table}")
+        with self._lock:
+            self._seen_turn_ids.clear()
+        _log.info("incident state reset", stage=STAGE_STATE_MUTATED)
+
+    def turn_seen(self, turn_id: str) -> bool:
+        """Has this turn already been claimed? Read-only.
+
+        For callers that want to *report* a duplicate without consuming the
+        claim -- the HTTP layer answering 200-vs-202 before the turn is even
+        queued. The authoritative claim belongs to the pipeline, so this
+        deliberately does not reserve anything: two racing requests can both
+        see "new", and the pipeline's claim serialises them.
+        """
+        with self._lock:
+            return turn_id in self._seen_turn_ids
 
     def close(self) -> None:
         with self._lock:
@@ -138,6 +205,14 @@ class IncidentStateStore:
                 raise
             else:
                 self._connection.execute("COMMIT")
+                # The version is bumped here rather than at each call site,
+                # so no future mutation can forget to invalidate the readers'
+                # caches. A transaction that turned out to be a no-op (a
+                # duplicate INSERT OR IGNORE) still bumps, which makes this an
+                # over-invalidating validator: it can cost a redundant re-read,
+                # but it can never report "unchanged" when something changed.
+                # For a cache validator that is the only safe direction to err.
+                self._version += 1
 
     @contextmanager
     def _read_transaction(self) -> Iterator[sqlite3.Connection]:
@@ -566,6 +641,216 @@ class IncidentStateStore:
                 speaker_uid=row["speaker_uid"],
             )
             for row in rows
+        )
+
+    def pending_actions_justified_by(self, hypothesis_ids: Sequence[str]) -> tuple[ProposedAction, ...]:
+        """Which unresolved actions rest on these theories?
+
+        The reverse edge of the justification graph. When reality invalidates
+        a hypothesis, this is the query that answers "what did we conclude
+        from it that now needs revisiting" -- and it is an indexed lookup
+        rather than a scan over every action in the incident.
+        """
+        if not hypothesis_ids:
+            return ()
+        placeholders = ",".join("?" for _ in hypothesis_ids)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT * FROM proposed_actions
+                    WHERE status = ? AND justifying_hypothesis_id IN ({placeholders})
+                    ORDER BY timestamp""",
+                (ProposedActionStatus.PENDING.value, *hypothesis_ids),
+            ).fetchall()
+        return tuple(self._row_to_action(row) for row in rows)
+
+    def recently_resolved(
+        self,
+        *,
+        target_ref: str,
+        action_kind: ActionKind,
+        since: datetime,
+    ) -> Optional[ProposedAction]:
+        """A matching action a human already decided, within the window.
+
+        Exists to recognise an *echo*: a second person agreeing with an
+        approval that has just been given. The words are indistinguishable
+        from a fresh proposal -- "yes, roll back core-db" is both -- and the
+        difference is entirely in the state, so the state layer is where it
+        has to be settled. Recording the echo as a new pending action
+        re-opens a settled question, and the console shows the same rollback
+        as confirmed and pending at once.
+
+        **Only a confirmation counts.** Re-proposing something the room *held*
+        or *declined* is not an echo -- it is a decision reversal, which is
+        one of the four things this product exists to catch. Matching on any
+        terminal status instead of CONFIRMED silently disables that check for
+        the whole window, which is the most expensive possible way to be
+        tidy. (Caught by the benchmark: risk evaluations per run dropped and
+        the reversal scenario stopped firing.)
+        """
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM proposed_actions
+                   WHERE target_ref = ? AND action_kind = ? AND status = ?
+                     AND resolved_at >= ?
+                   ORDER BY resolved_at DESC LIMIT 1""",
+                (
+                    target_ref,
+                    action_kind.value,
+                    ProposedActionStatus.CONFIRMED.value,
+                    to_iso(since),
+                ),
+            ).fetchone()
+        return self._row_to_action(row) if row is not None else None
+
+    def hypotheses_for_association(
+        self,
+        *,
+        target_ref: Optional[str],
+        metric_refs: Sequence[str] = (),
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+    ) -> tuple[Hypothesis, ...]:
+        """Theories that could plausibly justify an action on ``target_ref``.
+
+        Association needs three narrow slices -- theories about this
+        component, theories about a metric that describes it, and anything
+        stated recently -- and it needed all of them at once, so it read the
+        entire incident snapshot on every proposed action. That is the same
+        O(incident) read the working set exists to avoid, left on the hot
+        path.
+
+        One indexed union answers all three. Stale theories are deliberately
+        included: an action resting on a theory reality already contradicted
+        is precisely the failure this product exists to catch, so filtering
+        to active hypotheses here would hide it.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if target_ref:
+            clauses.append("target_ref = ?")
+            params.append(target_ref)
+        if metric_refs:
+            placeholders = ",".join("?" for _ in metric_refs)
+            clauses.append(f"metric_ref IN ({placeholders})")
+            params.extend(metric_refs)
+        if since is not None:
+            clauses.append("timestamp >= ?")
+            params.append(to_iso(since))
+        if not clauses:
+            return ()
+
+        sql = f"SELECT * FROM hypotheses WHERE ({' OR '.join(clauses)})"
+        if until is not None:
+            sql += " AND timestamp <= ?"
+            params.append(to_iso(until))
+        sql += " ORDER BY timestamp"
+
+        with self._lock:
+            rows = self._connection.execute(sql, params).fetchall()
+        return tuple(self._row_to_hypothesis(row) for row in rows)
+
+    def last_raised_at(self, claim_ids: Sequence[str]) -> dict[str, datetime]:
+        """When AEGIS last said something out loud about each of these actions.
+
+        The confirmation policy needs a reference moment for "is this reply
+        still about that action". Proposal time alone is the wrong one: a
+        discussion AEGIS itself re-opened is exactly when a human finally
+        answers, and timing that answer out would be perverse.
+
+        Only interventions that reached the room count. A decision that was
+        suppressed as a duplicate or queued behind the rate limit was never
+        live in the conversation, so it cannot make a reply about it timely.
+        """
+        if not claim_ids:
+            return {}
+        placeholders = ",".join("?" for _ in claim_ids)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT subject_claim_id, MAX(decided_at) AS raised_at
+                    FROM interventions
+                    WHERE subject_claim_id IN ({placeholders})
+                      AND spoken_text IS NOT NULL
+                      AND outcome = ?
+                    GROUP BY subject_claim_id""",
+                (*claim_ids, InterventionOutcome.SPOKEN.value),
+            ).fetchall()
+        return {
+            row["subject_claim_id"]: datetime.fromisoformat(row["raised_at"])
+            for row in rows
+            if row["subject_claim_id"] and row["raised_at"]
+        }
+
+    def latest_evidence_per_metric(self) -> tuple[Evidence, ...]:
+        """The current reading of each metric, resolved in SQL.
+
+        Every risk evaluation needs "what does each metric say *now*". Doing
+        that by loading the whole evidence history and folding it in Python
+        is O(readings) per evaluation, and readings accumulate for as long as
+        the incident runs -- so the cost of answering a fixed-size question
+        grows without bound.
+
+        A window function answers it in one indexed pass and returns exactly
+        one row per metric. The index on ``(metric_name, timestamp DESC)``
+        means the partition is already in the order the ranking needs.
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM (
+                       SELECT *, ROW_NUMBER() OVER (
+                           PARTITION BY metric_name ORDER BY timestamp DESC, rowid DESC
+                       ) AS recency
+                       FROM evidence
+                   ) WHERE recency = 1
+                   ORDER BY metric_name"""
+            ).fetchall()
+        return tuple(self._row_to_evidence(row) for row in rows)
+
+    def working_set_for(
+        self, action: ProposedAction, *, captured_at: datetime
+    ) -> StateSnapshot:
+        """Exactly the state one risk evaluation reads -- nothing else.
+
+        The checks need one hypothesis (the action's justification) and the
+        decisions recorded against one target. Materialising the entire
+        incident to answer that was the single most wasteful thing this
+        service did: O(claims) rows fetched and Pydantic-validated per
+        evaluation, repeated on every proposed action, to read two of them.
+
+        Both lookups are covered by indexes, so this is O(result) instead of
+        O(incident) and stays flat as the conversation grows.
+        """
+        with self._read_transaction() as conn:
+            hypotheses: list[Hypothesis] = []
+            if action.justifying_hypothesis_id:
+                row = conn.execute(
+                    "SELECT * FROM hypotheses WHERE claim_id = ?",
+                    (action.justifying_hypothesis_id,),
+                ).fetchone()
+                if row is not None:
+                    hypotheses.append(self._row_to_hypothesis(row))
+
+            decision_rows = conn.execute(
+                # Only the most recent decision at or before the action's
+                # moment is consulted, so fetching the target's whole
+                # decision history reintroduces exactly the O(incident)
+                # growth the working set exists to remove -- and it grows
+                # fastest on the target the room is arguing about, which is
+                # the one that matters.
+                """SELECT * FROM (
+                       SELECT * FROM decisions
+                       WHERE target_ref = ? AND timestamp <= ?
+                       ORDER BY timestamp DESC LIMIT 1
+                   ) ORDER BY timestamp""",
+                (action.target_ref, to_iso(action.timestamp)),
+            ).fetchall()
+
+        return StateSnapshot(
+            captured_at=captured_at,
+            facts=(),
+            hypotheses=tuple(hypotheses),
+            decisions=tuple(self._row_to_decision(row) for row in decision_rows),
+            proposed_actions=(action,),
         )
 
     def snapshot(self, *, captured_at: datetime) -> StateSnapshot:

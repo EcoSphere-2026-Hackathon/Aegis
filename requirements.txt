@@ -1,0 +1,32 @@
+# AEGIS runtime dependencies.
+#
+# Deliberately short. Every dependency on the demo path is something that can
+# fail to install on a laptop three days before a deadline, so the list is
+# only what the architecture actually requires.
+
+# The topology graph and its traversal. Locked by the architecture: the
+# blast-radius check is a real BFS over a real graph, not keyword matching.
+networkx>=3.0,<4.0
+
+# Typed data contracts, validated at every boundary, with JSON Schema
+# generation used to constrain the extraction model's output.
+pydantic>=2.5,<3.0
+
+# ASGI framework for the console and the ingestion API, plus its server.
+starlette>=0.36
+uvicorn>=0.27
+
+# HTTP client for the Agora REST calls and the extraction provider.
+# Chosen over requests for first-class timeouts on every call.
+httpx>=0.26
+
+# Notes on what is deliberately absent:
+#   - No LLM vendor SDK. The extraction provider speaks the OpenAI-compatible
+#     /chat/completions shape over httpx, which every major vendor and local
+#     runner supports, so the vendor choice stays configuration.
+#   - No SSE library. The protocol is four lines.
+#   - No ORM. The state store is one SQLite file with explicit SQL and
+#     explicit transactions; an ORM would hide exactly the transaction
+#     boundaries that matter here.
+#   - No test framework. Tests use the standard library's unittest, so they
+#     run anywhere Python does.

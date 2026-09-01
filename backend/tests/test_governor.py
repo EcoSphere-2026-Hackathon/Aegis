@@ -22,7 +22,11 @@ from backend.common.enums import (
 )
 from backend.common.errors import SpeechTooLongError
 from backend.common.models import RiskFinding, RiskVerdict
-from backend.governor.governor import Governor
+from backend.governor.governor import (
+    VOICED_MEMORY_MAX,
+    VOICED_MEMORY_SECONDS,
+    Governor,
+)
 from backend.governor.speech import (
     SPEAK_MAX_BYTES,
     build_intervention_text,
@@ -230,6 +234,249 @@ class SpeechTests(unittest.TestCase):
 
     def test_silent_produces_no_speech(self) -> None:
         self.assertEqual(build_intervention_text(RiskVerdict.low(), GovernorAction.SILENT), "")
+
+
+class SchedulingTests(unittest.TestCase):
+    """The channel is scarce: one intervention per window. Which one gets it
+    is an admission-control decision, and first-come-first-served is the
+    wrong policy for it."""
+
+    def setUp(self) -> None:
+        self.clock = ManualClock()
+        self.governor = Governor(
+            GovernorConfig(rate_limit_seconds=45.0, queue_max_age_seconds=180.0, max_queue_depth=3),
+            clock=self.clock,
+        )
+
+    def _occupy_window(self) -> None:
+        self.governor.decide(high_verdict("something to occupy the window"), subject_claim_id="occupier")
+
+    def test_severity_wins_the_channel_over_arrival_order(self) -> None:
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(medium_verdict("a minor concern"), subject_claim_id="minor")
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("a severe blast radius"), subject_claim_id="severe")
+
+        self.clock.advance(45)
+        verdict, subject = self.governor.take_pending()
+        self.assertEqual(subject, "severe")
+        self.assertEqual(verdict.risk_tier, RiskTier.HIGH)
+
+    def test_eviction_drops_the_least_valuable_not_the_oldest(self) -> None:
+        # The failure this prevents: a severe finding evicted to make room for
+        # two "worth confirming" prompts.
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("severe"), subject_claim_id="severe")
+        for index in range(4):
+            self.governor.decide(medium_verdict(f"minor {index}"), subject_claim_id=f"minor{index}")
+
+        self.clock.advance(45)
+        _verdict, subject = self.governor.take_pending()
+        self.assertEqual(subject, "severe")
+
+    def test_a_new_low_value_entry_is_refused_rather_than_displacing_a_better_one(self) -> None:
+        self._occupy_window()
+        self.clock.advance(1)
+        for index in range(3):
+            self.governor.decide(high_verdict(f"severe {index}"), subject_claim_id=f"severe{index}")
+        self.assertEqual(self.governor.queue_depth, 3)
+
+        self.governor.decide(medium_verdict("late minor"), subject_claim_id="late")
+        subjects = {entry["subject_claim_id"] for entry in self.governor.scheduling_stats()["queued"]}
+        self.assertNotIn("late", subjects)
+        self.assertEqual(len(subjects), 3)
+
+    def test_more_independent_findings_outrank_fewer_at_the_same_tier(self) -> None:
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("one problem"), subject_claim_id="single")
+        self.governor.decide(
+            high_verdict("first problem", "second problem", "third problem"),
+            subject_claim_id="compound",
+        )
+        self.clock.advance(45)
+        _verdict, subject = self.governor.take_pending()
+        self.assertEqual(subject, "compound")
+
+    def test_relevance_decays_so_a_stale_entry_loses_to_a_fresh_one(self) -> None:
+        # A long rate-limit window is the only way to age an entry meaningfully
+        # while the channel stays shut -- otherwise the later verdict is simply
+        # spoken on arrival and never competes for the queue at all.
+        clock = ManualClock()
+        governor = Governor(
+            GovernorConfig(rate_limit_seconds=120.0, queue_max_age_seconds=120.0),
+            clock=clock,
+        )
+        governor.decide(high_verdict("something to occupy the window"), subject_claim_id="occupier")
+        clock.advance(1)
+        governor.decide(medium_verdict("aged concern"), subject_claim_id="aged")
+
+        clock.advance(80)  # more than one half-life (60s) of decay
+        governor.decide(medium_verdict("fresh concern"), subject_claim_id="fresh")
+
+        clock.advance(40)  # channel reopens; neither entry has expired
+        stats = governor.scheduling_stats()
+        self.assertEqual(stats["dropped_stale"], 0)
+        _verdict, subject = governor.take_pending()
+        self.assertEqual(subject, "fresh")
+
+    def test_a_severe_entry_still_beats_a_mild_one_until_it_is_genuinely_old(self) -> None:
+        # Decay must not be so aggressive that a HIGH loses to a MEDIUM after
+        # a few seconds; severity has to dominate over short horizons.
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("severe"), subject_claim_id="severe")
+        self.clock.advance(30)
+        self.governor.decide(medium_verdict("fresh minor"), subject_claim_id="minor")
+
+        self.clock.advance(20)
+        _verdict, subject = self.governor.take_pending()
+        self.assertEqual(subject, "severe")
+
+    def test_scheduling_stats_report_what_the_policy_did(self) -> None:
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("severe"), subject_claim_id="severe")
+        self.governor.decide(medium_verdict("minor"), subject_claim_id="minor")
+
+        stats = self.governor.scheduling_stats()
+        self.assertEqual(stats["queue_depth"], 2)
+        # Reported highest-utility first, so the ordering is inspectable.
+        self.assertEqual(stats["queued"][0]["subject_claim_id"], "severe")
+        self.assertGreater(stats["queued"][0]["utility"], stats["queued"][1]["utility"])
+
+    def test_expired_entries_never_win_on_utility(self) -> None:
+        self._occupy_window()
+        self.clock.advance(1)
+        self.governor.decide(high_verdict("severe but doomed"), subject_claim_id="doomed")
+        self.clock.advance(500)
+        self.assertIsNone(self.governor.take_pending())
+        self.assertEqual(self.governor.scheduling_stats()["dropped_stale"], 1)
+
+
+class VoicedMemoryTests(unittest.TestCase):
+    """AEGIS must not repeat itself inside one stretch of conversation, and
+    must not be permanently gagged on a concern that becomes news again."""
+
+    def setUp(self) -> None:
+        self.clock = ManualClock()
+        self.governor = Governor(clock=self.clock)
+
+    def test_the_same_concern_is_not_said_twice_in_a_row(self) -> None:
+        self.governor.decide(high_verdict("the pool theory was contradicted"))
+        self.clock.advance(60)
+        second = self.governor.decide(high_verdict("the pool theory was contradicted"))
+        self.assertIsNot(second.action, GovernorAction.WARN)
+
+    def test_a_concern_becomes_sayable_again_much_later(self) -> None:
+        # Suppression is "we just covered this", not a permanent gag. A
+        # contradiction raised in minute three is news again in hour two.
+        self.governor.decide(high_verdict("the pool theory was contradicted"))
+        self.clock.advance(VOICED_MEMORY_SECONDS + 60)
+        again = self.governor.decide(high_verdict("the pool theory was contradicted"))
+        self.assertIs(again.action, GovernorAction.WARN)
+
+    def test_the_memory_is_bounded_over_a_long_incident(self) -> None:
+        for index in range(VOICED_MEMORY_MAX * 2):
+            self.clock.advance(46)
+            self.governor.decide(
+                high_verdict(f"distinct concern {index}"), subject_claim_id=f"c{index}"
+            )
+        self.assertLessEqual(self.governor.voiced_memory_size, VOICED_MEMORY_MAX)
+
+
+class SpeechBudgetTests(unittest.TestCase):
+    """The 512-byte limit makes composing an intervention a packing problem,
+    not a truncation problem."""
+
+    def _verdict(self, *specs) -> RiskVerdict:
+        codes = [
+            RiskFindingCode.BLAST_RADIUS_SCHEMA_BREAK,
+            RiskFindingCode.DECISION_REVERSAL,
+            RiskFindingCode.STALE_JUSTIFICATION,
+            RiskFindingCode.EVIDENCE_CONTRADICTION_LOW_CERTAINTY,
+        ]
+        return RiskVerdict.from_findings(
+            [
+                RiskFinding(code=codes[index % len(codes)], tier=tier, message=message)
+                for index, (tier, message) in enumerate(specs)
+            ]
+        )
+
+    def test_two_short_findings_are_preferred_over_one_long_one_of_equal_tier(self) -> None:
+        # Greedy-by-severity takes whichever equal-tier finding comes first
+        # and can then afford nothing else. The packing solve keeps the pair,
+        # which carries strictly more information for the same bytes.
+        verdict = self._verdict(
+            (RiskTier.HIGH, "rollback of core-db will break payment-api"),
+            (RiskTier.MEDIUM, "the pool root cause is unconfirmed " + "y" * 90),
+            (RiskTier.MEDIUM, "this reverses an earlier hold on core-db"),
+            (RiskTier.MEDIUM, "the error rate reading is unclear"),
+        )
+        # 228 bytes leaves room for either the verbose finding alone or both
+        # concise ones -- exactly the trade greedy-by-severity gets wrong.
+        text = build_intervention_text(verdict, GovernorAction.WARN, max_bytes=228)
+
+        self.assertLessEqual(len(text.encode("utf-8")), 228)
+        self.assertNotIn("yyyy", text, "the verbose finding crowded out two shorter ones")
+        self.assertIn("reverses an earlier hold", text)
+        self.assertIn("error rate reading is unclear", text)
+
+    def test_the_most_severe_finding_is_never_dropped(self) -> None:
+        # Its tier decides the intervention's tier, so trading it away would
+        # downgrade a warning into a question.
+        verdict = self._verdict(
+            (RiskTier.HIGH, "rollback of core-db breaks payment-api and auth-service"),
+            (RiskTier.MEDIUM, "minor a"),
+            (RiskTier.MEDIUM, "minor b"),
+            (RiskTier.MEDIUM, "minor c"),
+        )
+        text = build_intervention_text(verdict, GovernorAction.WARN, max_bytes=200)
+        self.assertIn("breaks payment-api", text)
+
+    def test_the_announced_count_matches_what_is_actually_said(self) -> None:
+        verdict = self._verdict(
+            (RiskTier.HIGH, "first"),
+            (RiskTier.MEDIUM, "second"),
+            (RiskTier.MEDIUM, "third"),
+        )
+        text = build_intervention_text(verdict, GovernorAction.WARN)
+        self.assertIn("three issues", text)
+        self.assertEqual(sum(word in text for word in ("First.", "Second.", "Third.")), 3)
+
+    def test_the_budget_accounts_for_the_widest_spoken_count_word(self) -> None:
+        # The frame grows with the number of findings: "two issues" becomes
+        # "three issues", two bytes more. Budgeting against the one-finding
+        # frame lets an optimal pack land over the cap. Sweeping the budget
+        # byte by byte walks the packing across every boundary where the
+        # chosen set -- and so the count word -- changes.
+        verdict = self._verdict(
+            (RiskTier.HIGH, "rollback of core-db will break payment-api"),
+            (RiskTier.MEDIUM, "this reverses an earlier hold on core-db"),
+            (RiskTier.MEDIUM, "the error rate reading is unclear"),
+            (RiskTier.MEDIUM, "the pool root cause is still unconfirmed"),
+        )
+        for budget in range(100, 320):
+            with self.subTest(budget=budget):
+                try:
+                    text = build_intervention_text(
+                        verdict, GovernorAction.WARN, max_bytes=budget
+                    )
+                except SpeechTooLongError:
+                    continue  # too small for even the lead finding
+                self.assertLessEqual(len(text.encode("utf-8")), budget)
+
+    def test_packing_never_exceeds_the_budget_under_stress(self) -> None:
+        for count in range(1, 9):
+            with self.subTest(findings=count):
+                verdict = self._verdict(
+                    (RiskTier.HIGH, "lead finding with a realistic length to it"),
+                    *[(RiskTier.MEDIUM, f"finding {i} " + "z" * (20 * i)) for i in range(1, count)],
+                )
+                text = build_intervention_text(verdict, GovernorAction.WARN)
+                self.assertLessEqual(len(text.encode("utf-8")), SPEAK_MAX_BYTES)
 
 
 class StatusSummaryTests(unittest.TestCase):

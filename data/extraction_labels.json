@@ -1,0 +1,217 @@
+{
+  "name": "extraction-labels",
+  "description": "Hand-labelled utterances for measuring the extraction stage. Labels are what a careful incident responder would say the utterance means, authored before any provider was run against them. The set is small and hackathon-scoped and is reported as such; its purpose is to give a number to 'how good is the understanding', which reasoning tests cannot answer because they use a deterministic provider by construction.",
+  "label_notes": {
+    "types": "One of: fact, hypothesis, proposed_action, decision, confirmation, override, hold, none. 'expect_types' is the set of claim types the utterance should produce, ignoring order and duplicates.",
+    "fact_vs_hypothesis": "A fact is something asserted as settled and observable. A hypothesis is a theory about cause, or a figure recited from impression rather than read off a dashboard. Confidently-stated causal claims are hypotheses: confidence is not evidence.",
+    "no_action": "'must_not_propose' marks utterances that discuss an action without proposing one. Reading these as proposals is a false positive that spends an intervention.",
+    "pending": "'pending' lists targets awaiting a decision when the utterance was said. It changes what the same words mean, so it is part of the input, not the label."
+  },
+  "cases": [
+    {
+      "id": "explicit_fact",
+      "text": "Payments are throwing 500s, seeing timeouts.",
+      "probes": "A plain observation of what is happening.",
+      "expect_types": ["fact"],
+      "must_not_propose": true
+    },
+    {
+      "id": "fact_with_component",
+      "text": "The api-gateway health check has been failing since 14:02.",
+      "probes": "An observation that names a component; the target must be bound.",
+      "expect_types": ["fact"],
+      "expect_target": "api-gateway"
+    },
+    {
+      "id": "hedged_theory",
+      "text": "It might be the connection pool, not sure yet.",
+      "probes": "Explicit uncertainty. Misreading this as a fact lets a guess drive an action.",
+      "expect_types": ["hypothesis"]
+    },
+    {
+      "id": "confident_causal_claim",
+      "text": "It's the retry storm, definitely. That's what's killing us.",
+      "probes": "Confidently stated cause. Confidence is not evidence: still a hypothesis.",
+      "expect_types": ["hypothesis"]
+    },
+    {
+      "id": "recited_figure",
+      "text": "Pool utilization looks fine, like 40%.",
+      "probes": "A number recited from impression. Must bind the metric and the value so it can be grounded.",
+      "expect_types": ["hypothesis"],
+      "expect_metric": "pool_utilization",
+      "expect_value": 40.0
+    },
+    {
+      "id": "metric_with_unit",
+      "text": "p99 latency is about 900ms right now.",
+      "probes": "Unit-carrying figure. A unit read wrongly manufactures a false contradiction.",
+      "expect_types": ["hypothesis"],
+      "expect_metric": "p99_latency"
+    },
+    {
+      "id": "speculation_about_the_future",
+      "text": "If this keeps up we might have to page the database team.",
+      "probes": "Speculation about a future step is not a proposal to take one now.",
+      "must_not_propose": true
+    },
+    {
+      "id": "explicit_proposal",
+      "text": "Let's rollback Core to the last version.",
+      "probes": "The central proposal in the demo. Target and kind must both bind or the blast-radius check never runs.",
+      "expect_types": ["proposed_action"],
+      "expect_target": "core-db",
+      "expect_action_kind": "rollback"
+    },
+    {
+      "id": "split_verb_particle",
+      "text": "Let's roll core-db back anyway.",
+      "probes": "People separate the verb from its particle. A substring match for 'roll back' misses this.",
+      "expect_types": ["proposed_action"],
+      "expect_target": "core-db",
+      "expect_action_kind": "rollback"
+    },
+    {
+      "id": "proposal_with_version",
+      "text": "We should roll core-db back to v2.3.",
+      "probes": "The landing version is what the schema-compatibility check compares.",
+      "expect_target": "core-db",
+      "expect_action_kind": "rollback",
+      "expect_schema_version": "v2.3"
+    },
+    {
+      "id": "restart_is_not_a_rollback",
+      "text": "Let's restart notification-service.",
+      "probes": "Action kind accuracy. A restart has a different blast radius from a rollback.",
+      "expect_types": ["proposed_action"],
+      "expect_target": "notification-service",
+      "expect_action_kind": "restart"
+    },
+    {
+      "id": "unresolvable_target",
+      "text": "Let's just restart the thing.",
+      "probes": "No resolvable component. Inventing one would give the risk engine a target it cannot check.",
+      "must_not_invent_target": true
+    },
+    {
+      "id": "two_claims_one_breath",
+      "text": "Okay, fine, it is the pool then. Let's rollback Core to the last version.",
+      "probes": "One turn carrying a theory and an action. Losing either breaks the justification link.",
+      "expect_types": ["hypothesis", "proposed_action"],
+      "expect_target": "core-db"
+    },
+    {
+      "id": "correction_of_an_earlier_figure",
+      "text": "Sorry, I had that wrong -- error rate is 12%, not 2%.",
+      "probes": "A correction still asserts a figure; the current one must bind.",
+      "expect_metric": "error_rate"
+    },
+    {
+      "id": "contradiction_of_a_teammate",
+      "text": "That's not what I'm seeing, the pool is at 91%.",
+      "probes": "Disagreement about a number, which is what grounding exists to resolve.",
+      "expect_metric": "pool_utilization"
+    },
+    {
+      "id": "decision_to_hold",
+      "text": "Hold on, don't rollback yet, let's check the pool metrics properly first.",
+      "probes": "A hold, not a fresh proposal. Reading it as a proposal is exactly backwards.",
+      "pending": ["core-db"],
+      "expect_types": ["hold"],
+      "must_not_confirm": true
+    },
+    {
+      "id": "hold_phrased_as_progressive",
+      "text": "We're holding off on the core-db rollback for now.",
+      "probes": "Inflected phrasing of the same decision.",
+      "pending": ["core-db"],
+      "must_not_confirm": true
+    },
+    {
+      "id": "explicit_confirmation",
+      "text": "Yes, go ahead with the core-db rollback.",
+      "probes": "The only kind of utterance that may authorise anything.",
+      "pending": ["core-db"],
+      "expect_types": ["confirmation"],
+      "expect_target": "core-db"
+    },
+    {
+      "id": "bare_affirmative_while_pending",
+      "text": "yeah",
+      "probes": "In answer to a question this is a decision. The resolution policy decides whether it can be safely applied; extraction must not silently discard it.",
+      "pending": ["core-db"],
+      "expect_types": ["confirmation"]
+    },
+    {
+      "id": "acknowledgement_is_not_approval",
+      "text": "okay",
+      "probes": "'Okay' may mean 'I agree' or 'I heard you'. Treating it as approval authorises something nobody agreed to.",
+      "pending": ["core-db"],
+      "must_not_confirm": true
+    },
+    {
+      "id": "ambiguous_reply",
+      "text": "uh, I guess maybe",
+      "probes": "The most dangerous false positive in the system.",
+      "pending": ["core-db"],
+      "must_not_confirm": true
+    },
+    {
+      "id": "benign_no",
+      "text": "no problem, that works for me",
+      "probes": "A 'no' that is not a refusal. Reading it as one would decline an action nobody declined.",
+      "pending": ["core-db"],
+      "must_not_override": true
+    },
+    {
+      "id": "refusal",
+      "text": "No, don't do that.",
+      "probes": "An actual refusal.",
+      "pending": ["core-db"],
+      "expect_types": ["override"]
+    },
+    {
+      "id": "backchannel",
+      "text": "mm hmm",
+      "probes": "Filler. Producing any claim from it is a false positive on every turn of a real call.",
+      "expect_types": ["none"]
+    },
+    {
+      "id": "small_talk",
+      "text": "Morning, can everyone hear me?",
+      "probes": "Irrelevant chatter must produce nothing actionable.",
+      "must_not_propose": true,
+      "must_not_confirm": true
+    },
+    {
+      "id": "authoritative_but_unverified",
+      "text": "I can tell you right now the schema is the problem, I've seen this before.",
+      "probes": "Authority is not evidence. This is still an unconfirmed theory.",
+      "expect_types": ["hypothesis"]
+    },
+    {
+      "id": "pronoun_reference_to_a_component",
+      "text": "It's still failing, let's roll it back.",
+      "probes": "A pronoun with no resolvable referent in the utterance. Guessing a component here is worse than binding none.",
+      "must_not_invent_target": true
+    },
+    {
+      "id": "two_components_named",
+      "text": "auth-service and payment-api are both on the old schema.",
+      "probes": "Multiple entities in one sentence. Binding either is correct; binding a third is not.",
+      "expect_target": "auth-service"
+    },
+    {
+      "id": "temporal_reference",
+      "text": "Error rate was fine an hour ago, it's 12% now.",
+      "probes": "Past and present figures in one sentence; the current one is the claim.",
+      "expect_metric": "error_rate"
+    },
+    {
+      "id": "domain_shorthand",
+      "text": "Core is pegged, connection pool's maxed.",
+      "probes": "Incident-room shorthand for a component and a metric.",
+      "expect_target": "core-db"
+    }
+  ]
+}

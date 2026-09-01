@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 
 from backend.common.enums import (
-    ActionKind,
     DecisionStance,
     GovernorAction,
     HypothesisStatus,
@@ -23,17 +22,9 @@ from backend.common.enums import (
     ProposedActionStatus,
     RiskFindingCode,
     RiskTier,
-    SourceModality,
 )
 from backend.common.errors import EntityNotFoundError, IllegalStateTransitionError
-from backend.common.models import (
-    Evidence,
-    Hypothesis,
-    InterventionRecord,
-    RiskFinding,
-    RiskVerdict,
-)
-from backend.common.enums import EvidenceSource, EvidenceSourceType
+from backend.common.models import InterventionRecord, RiskFinding, RiskVerdict
 from backend.risk_engine.staleness import HypothesisTransitions
 from backend.state_store.store import IncidentStateStore
 from backend.tests.support import (
@@ -307,6 +298,149 @@ class HypothesisTransitionTests(StoreTestCase):
         # applies, and the whole batch is one transaction.
         self.store.apply_hypothesis_transitions(transitions, touched_at=at(30))
         self.assertIs(self.store.get_hypothesis(good.claim_id).status, HypothesisStatus.STALE)
+
+
+class WorkingSetTests(StoreTestCase):
+    """A risk evaluation reads two things. It should fetch two things."""
+
+    def test_the_working_set_contains_only_what_the_checks_read(self) -> None:
+        justification = make_hypothesis(target_ref="core-db")
+        self.store.add_hypothesis(justification)
+        self.store.add_hypothesis(make_hypothesis(text="an unrelated theory", target_ref="payment-api"))
+        for index in range(20):
+            self.store.add_fact(make_fact(f"noise {index}", when=index))
+        self.store.add_decision(make_decision(target_ref="core-db"))
+        self.store.add_decision(make_decision(text="about something else", target_ref="payment-api", when=2))
+
+        action = make_action(justifying_hypothesis_id=justification.claim_id)
+        self.store.add_proposed_action(action)
+
+        working = self.store.working_set_for(action, captured_at=at(100))
+        self.assertEqual([h.claim_id for h in working.hypotheses], [justification.claim_id])
+        self.assertEqual([d.target_ref for d in working.decisions], ["core-db"])
+        self.assertEqual(working.facts, ())
+
+    def test_the_working_set_answers_the_same_questions_as_a_full_snapshot(self) -> None:
+        justification = make_hypothesis(target_ref="core-db")
+        self.store.add_hypothesis(justification)
+        decision = make_decision(target_ref="core-db")
+        self.store.add_decision(decision)
+        action = make_action(justifying_hypothesis_id=justification.claim_id)
+        self.store.add_proposed_action(action)
+
+        working = self.store.working_set_for(action, captured_at=at(100))
+        full = self.store.snapshot(captured_at=at(100))
+        self.assertEqual(
+            working.hypothesis(action.justifying_hypothesis_id),
+            full.hypothesis(action.justifying_hypothesis_id),
+        )
+        self.assertEqual(working.decisions_for("core-db"), full.decisions_for("core-db"))
+
+    def test_an_action_with_no_justification_yields_no_hypotheses(self) -> None:
+        action = make_action(justifying_hypothesis_id=None)
+        self.store.add_proposed_action(action)
+        self.assertEqual(self.store.working_set_for(action, captured_at=at(100)).hypotheses, ())
+
+
+class LatestEvidenceTests(StoreTestCase):
+    def test_only_the_current_reading_of_each_metric_is_returned(self) -> None:
+        for index in range(10):
+            self.store.add_evidence(make_telemetry(value=80 + index, when=index))
+            self.store.add_evidence(make_telemetry(metric_name="error_rate", value=index, when=index))
+
+        latest = {item.metric_name: item.value for item in self.store.latest_evidence_per_metric()}
+        self.assertEqual(latest, {"pool_utilization": 89.0, "error_rate": 9.0})
+
+    def test_it_matches_folding_the_full_history_in_python(self) -> None:
+        for index in range(6):
+            self.store.add_evidence(make_telemetry(value=70 + index, when=index * 3))
+        from backend.risk_engine.checks import latest_evidence_by_metric
+
+        in_sql = {item.metric_name: item.value for item in self.store.latest_evidence_per_metric()}
+        in_python = {
+            name: item.value
+            for name, item in latest_evidence_by_metric(self.store.evidence()).items()
+        }
+        self.assertEqual(in_sql, in_python)
+
+    def test_empty_evidence_is_handled(self) -> None:
+        self.assertEqual(self.store.latest_evidence_per_metric(), ())
+
+
+class JustificationGraphTests(StoreTestCase):
+    def test_the_reverse_edge_finds_dependent_pending_actions(self) -> None:
+        theory = make_hypothesis()
+        self.store.add_hypothesis(theory)
+        dependent = make_action(justifying_hypothesis_id=theory.claim_id)
+        unrelated = make_action(target_ref="payment-api", when=11)
+        self.store.add_proposed_action(dependent)
+        self.store.add_proposed_action(unrelated)
+
+        found = self.store.pending_actions_justified_by([theory.claim_id])
+        self.assertEqual([a.claim_id for a in found], [dependent.claim_id])
+
+    def test_resolved_actions_are_not_revisited(self) -> None:
+        theory = make_hypothesis()
+        self.store.add_hypothesis(theory)
+        action = make_action(justifying_hypothesis_id=theory.claim_id)
+        self.store.add_proposed_action(action)
+        self.store.resolve_proposed_action(
+            action.claim_id, ProposedActionStatus.HELD, resolved_by_uid="1002", resolved_at=at(30)
+        )
+        self.assertEqual(self.store.pending_actions_justified_by([theory.claim_id]), ())
+
+    def test_empty_input_is_a_no_op(self) -> None:
+        self.assertEqual(self.store.pending_actions_justified_by([]), ())
+
+
+class VersioningTests(StoreTestCase):
+    def test_a_write_advances_the_version(self) -> None:
+        before = self.store.version
+        self.store.add_fact(make_fact())
+        self.assertGreater(self.store.version, before)
+
+    def test_reads_do_not_advance_the_version(self) -> None:
+        self.store.add_fact(make_fact())
+        before = self.store.version
+        self.store.snapshot(captured_at=at(60))
+        self.store.incident_view(captured_at=at(60))
+        self.store.timeline()
+        self.assertEqual(self.store.version, before)
+
+    def test_the_version_only_ever_over_invalidates(self) -> None:
+        # A duplicate write changes nothing but still bumps. That is the safe
+        # direction for a cache validator: a redundant re-read costs a little,
+        # reporting "unchanged" when something changed costs correctness.
+        fact = make_fact()
+        self.store.add_fact(fact)
+        before = self.store.version
+        self.store.add_fact(fact)
+        self.assertGreaterEqual(self.store.version, before)
+
+
+class TurnIdempotencyTests(StoreTestCase):
+    def test_a_turn_id_can_only_be_claimed_once(self) -> None:
+        self.assertTrue(self.store.claim_turn("turn-1"))
+        self.assertFalse(self.store.claim_turn("turn-1"))
+        self.assertTrue(self.store.claim_turn("turn-2"))
+
+    def test_claiming_is_safe_under_concurrency(self) -> None:
+        winners: list[bool] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(8)
+
+        def claim() -> None:
+            barrier.wait()
+            result = self.store.claim_turn("contended")
+            with lock:
+                winners.append(result)
+
+        threads = [threading.Thread(target=claim) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sum(winners), 1)
 
 
 class ForeignKeyTests(StoreTestCase):

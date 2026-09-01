@@ -127,6 +127,10 @@ EVENT_CLAIM = "claim"
 EVENT_STATE_CHANGED = "state_changed"
 EVENT_RISK_VERDICT = "risk_verdict"
 EVENT_INTERVENTION = "intervention"
+
+#: The incident was cleared for a fresh run. The console listens for this
+#: so a reset from the API is visible without a page reload.
+EVENT_RESET = "reset"
 EVENT_RESOLUTION = "resolution"
 EVENT_EVIDENCE = "evidence"
 EVENT_ERROR = "error"

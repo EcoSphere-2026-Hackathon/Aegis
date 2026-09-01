@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 from backend.extraction.contracts import (
     ExtractionContext,
@@ -45,21 +45,47 @@ _HEDGE_CUES = (
     "seems", "seem to", "could be", "not sure", "my guess", "i'd guess",
     "suspect", "possibly", "presumably", "appears", "feels like", "pretty sure",
 )
-_HOLD_CUES = (
-    "hold off", "hold on", "let's hold", "hold", "wait", "pause", "not yet",
-    "before we do", "stop", "hang on", "hang fire",
-)
-_OVERRIDE_CUES = (
-    "don't", "do not", "no,", "nope", "cancel", "abort", "never mind", "scrap that",
+#: Hold and refusal, matched by pattern.
+#:
+#: Inflection is the whole point here. "We're holding off on the rollback" is
+#: a hold; a substring list containing "hold off" misses it, because the word
+#: in the sentence is "holding". Getting that wrong records the decision with
+#: the opposite polarity, and the decision-reversal check -- which exists to
+#: catch exactly this failure mode -- then never fires.
+_HOLD_PATTERN = re.compile(
+    r"\bhold(?:s|ing)?\b(?:\s+(?:off|on|fire))?"
+    r"|\bwait(?:s|ing)?\b|\bpaus(?:e|es|ed|ing)\b|\bstop(?:s|ped|ping)?\b"
+    r"|\bnot\s+yet\b|\bhang\s+on\b|\bbefore\s+we\s+do\b|\bstand\s+down\b"
 )
 
-#: Cues matched on word boundaries rather than as substrings, because the
-#: bare words are short enough to appear inside unrelated ones ("hold" in
-#: "household", "stop" in "stopgap", "no," is fine but "no" alone is not).
-_WORD_BOUNDARY_CUES = frozenset({"hold", "wait", "pause", "stop", "no", "nope"})
+_OVERRIDE_PATTERN = re.compile(
+    r"\bdon'?t\b|\bdo\s+not\b|\bnope\b|\bcancel(?:s|led|ling)?\b"
+    r"|\babort(?:s|ed|ing)?\b|\bnever\s+mind\b|\bscrap\s+that\b"
+    # Bare "no" only when it is a refusal, not "no problem" / "no idea".
+    r"|\bno\b(?!\s+(?:problem|idea|worries|rush|change|one))"
+)
+
+#: Any marker that a decision is a decision *not* to proceed.
+_NEGATIVE_STANCE_PATTERN = re.compile(
+    _HOLD_PATTERN.pattern + r"|" + _OVERRIDE_PATTERN.pattern + r"|\bnot\b|\bleaving\s+\S+\s+alone\b"
+)
 _CONFIRMATION_CUES = (
     "go ahead", "do it", "yes,", "yep", "yeah, do", "approved", "confirmed",
     "ship it", "green light", "i approve", "sounds good, do",
+)
+
+#: A whole utterance that is nothing but an affirmative. Only consulted while
+#: something is awaiting a decision, where "yeah" on its own is an answer
+#: rather than filler.
+#:
+#: The list stops where certainty stops, and that boundary is the safety rule
+#: rather than a matter of taste. "Yes" and "yeah" are answers. "Okay",
+#: "sure", "right" and "mm hmm" are acknowledgements -- a person saying "okay"
+#: may be agreeing, or may just be signalling that they heard, and a system
+#: that cannot tell those apart must not treat either as authorisation.
+_BARE_AFFIRMATIVE = re.compile(
+    r"^(?:(?:yes|yeah|yeh|yep|yup|absolutely|definitely|agreed)[\s,.!?]*)+$",
+    re.IGNORECASE,
 )
 _PROPOSAL_CUES = (
     "let's", "lets ", "we should", "i'll", "i will", "we can", "can we",
@@ -69,10 +95,38 @@ _PROPOSAL_CUES = (
 #: unverified root-cause claim stated as settled, which is precisely the
 #: failure mode this product exists to catch. Classifying it as a fact would
 #: let the very thing AEGIS is meant to notice pass unnoticed.
+#:
+#: Split in two because the two halves need different evidence.
+#:
+#: **Explicit** cues name causation outright, so the sentence is a theory
+#: whether or not the thing blamed is in the topology. "It's the retry storm,
+#: definitely" was being filed as a settled fact purely because "retry storm"
+#: is not a known component -- so the most confident unverified claim in the
+#: room became the one nothing could contradict. That is the failure mode
+#: inverted. (Found by the labelled extraction evaluation, not by reading the
+#: code.)
+_EXPLICIT_CAUSAL_CUES = (
+    "the cause is", "root cause", "caused by", "because of", "due to",
+    "culprit", "is the problem", "what's killing", "whats killing",
+    "that's why", "thats why", "explains the", "explains why",
+)
+
+#: **Weak** cues are only causal in context: "it's the pool" is a theory,
+#: "it's fine" is not. They need a bound component or metric before they mean
+#: anything, which is what stops every "it's ..." sentence becoming a theory.
 _CAUSAL_CUES = (
-    "it is the", "it's the", "that's the", "thats the", "the cause is",
-    "root cause", "caused by", "because of", "due to", "culprit",
+    "it is the", "it's the", "that's the", "thats the",
     "it is ", "it's ",
+)
+
+#: Words people use to mark certainty. They do not make a claim true, and in
+#: this system they are close to the opposite: an unverified cause asserted
+#: with emphasis is exactly what the product exists to notice. So a weak
+#: causal cue plus one of these is a theory even when the thing being blamed
+#: is not a component AEGIS knows about.
+_CERTAINTY_MARKERS = (
+    "definitely", "for sure", "obviously", "clearly", "no question",
+    "100%", "certainly", "i'm certain", "im certain", "guaranteed",
 )
 _DECISION_CUES = (
     "we're going with", "we are going with", "decision is", "we've decided",
@@ -80,13 +134,24 @@ _DECISION_CUES = (
     "agreed", "final answer", "let's go with", "we're holding", "we are holding",
 )
 
-_ACTION_KIND_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("rollback", ("roll back", "rollback", "revert", "roll it back", "previous version", "last version")),
-    ("migration", ("migrate", "migration", "schema change", "apply the migration")),
-    ("failover", ("fail over", "failover", "switch to the replica", "promote the replica")),
-    ("restart", ("restart", "reboot", "bounce", "cycle the", "recycle")),
-    ("scale", ("scale up", "scale down", "scale out", "add replicas", "bump the pool", "resize")),
-    ("config_change", ("config", "flag", "toggle", "set the", "change the setting", "increase the limit")),
+#: Action kinds, matched by pattern rather than substring.
+#:
+#: Patterns because English separates the verb from its particle: people say
+#: "roll core-db back", not "roll back core-db", and a substring match for
+#: "roll back" silently misses it. Missing the *kind* is not cosmetic -- the
+#: schema-compatibility check only runs for actions that change a schema
+#: surface, so an unrecognised rollback is a blast radius nobody checks.
+_ACTION_KIND_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("rollback", re.compile(
+        r"\broll(?:s|ing|ed)?\b(?:\s+\S+){0,3}?\s+back\b"
+        r"|\brollback\b|\broll\s+back\b|\brevert(?:s|ing|ed)?\b"
+        r"|\b(?:previous|last|prior)\s+version\b|\bback\s+out\b"
+    )),
+    ("migration", re.compile(r"\bmigrat(?:e|es|ing|ion)\b|\bschema\s+change\b")),
+    ("failover", re.compile(r"\bfail\s*over\b|\bpromote\s+the\s+replica\b|\bswitch\s+to\s+the\s+replica\b")),
+    ("restart", re.compile(r"\brestart(?:s|ing|ed)?\b|\breboot(?:s|ing|ed)?\b|\bbounc(?:e|es|ing|ed)\b|\brecycl(?:e|es|ing|ed)\b")),
+    ("scale", re.compile(r"\bscale\s+(?:up|down|out|in)\b|\badd\s+replicas\b|\bresiz(?:e|es|ing|ed)\b|\bbump\s+the\s+pool\b")),
+    ("config_change", re.compile(r"\bconfig(?:uration)?\b|\bfeature\s+flag\b|\btoggl(?:e|es|ing|ed)\b|\bchange\s+the\s+setting\b|\bincrease\s+the\s+limit\b")),
 )
 
 _NUMBER_PATTERN = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d+)?)\s*(%|percent|ms|milliseconds|s\b|seconds)?")
@@ -167,9 +232,11 @@ class DeterministicProvider:
                     claims.append(self._proposal_claim(base, sentence, lowered, target))
                 return claims
 
-        if self._contains(lowered, _DECISION_CUES) or (
-            self._contains(lowered, _HOLD_CUES) and target is not None
-        ):
+        # A hold stated when nothing is pending is a decision for the ledger,
+        # whether or not the component is named. Recording it without a
+        # target still matters: it is what the team agreed, and the ledger is
+        # the audit trail the product is built around.
+        if self._contains(lowered, _DECISION_CUES) or _HOLD_PATTERN.search(lowered):
             stance = "hold" if self._is_negative(lowered) else "proceed"
             return [{**base, "type": "decision", "decision_stance": stance}]
 
@@ -184,9 +251,14 @@ class DeterministicProvider:
         if self._contains(lowered, _HEDGE_CUES):
             return [{**base, "type": "hypothesis"}]
 
-        # An unhedged causal claim about a component or metric is still a
-        # theory, however confidently it was said.
-        if (target or metric) and self._contains(lowered, _CAUSAL_CUES):
+        # An unhedged causal claim is still a theory, however confidently it
+        # was said -- and whether or not the thing being blamed happens to be
+        # a component this system knows about.
+        if self._contains(lowered, _EXPLICIT_CAUSAL_CUES):
+            return [{**base, "type": "hypothesis"}]
+        if self._contains(lowered, _CAUSAL_CUES) and (
+            target or metric or self._contains(lowered, _CERTAINTY_MARKERS)
+        ):
             return [{**base, "type": "hypothesis"}]
 
         # A bare metric reading someone recites from impression is a hedge,
@@ -208,11 +280,13 @@ class DeterministicProvider:
         an approval authorises something nobody agreed to, which is the one
         failure this system exists to prevent.
         """
-        if self._contains(lowered, _HOLD_CUES):
+        if _HOLD_PATTERN.search(lowered):
             return "hold"
-        if self._contains(lowered, _OVERRIDE_CUES):
+        if _OVERRIDE_PATTERN.search(lowered):
             return "override"
         if self._contains(lowered, _CONFIRMATION_CUES):
+            return "confirmation"
+        if _BARE_AFFIRMATIVE.match(lowered.strip()):
             return "confirmation"
         return None
 
@@ -228,22 +302,16 @@ class DeterministicProvider:
 
     @staticmethod
     def _contains(text: str, cues: Sequence[str]) -> bool:
-        for cue in cues:
-            if cue in _WORD_BOUNDARY_CUES:
-                if re.search(rf"\b{re.escape(cue)}\b", text):
-                    return True
-            elif cue in text:
-                return True
-        return False
+        return any(cue in text for cue in cues)
 
     @staticmethod
     def _is_negative(text: str) -> bool:
-        return any(cue in text for cue in _OVERRIDE_CUES + _HOLD_CUES)
+        return bool(_NEGATIVE_STANCE_PATTERN.search(text))
 
     @staticmethod
     def _action_kind(text: str) -> Optional[str]:
-        for kind, cues in _ACTION_KIND_CUES:
-            if any(cue in text for cue in cues):
+        for kind, pattern in _ACTION_KIND_PATTERNS:
+            if pattern.search(text):
                 return kind
         return None
 

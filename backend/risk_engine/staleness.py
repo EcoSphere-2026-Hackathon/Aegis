@@ -12,7 +12,7 @@ It shares :mod:`backend.risk_engine.policy` with the contradiction check, so
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Sequence
 
 from pydantic import BaseModel, ConfigDict
 

@@ -1,51 +1,32 @@
+# Secrets. The one file that must never be committed.
+.env
+*.pem
+*.key
+
+# Runtime state and logs. The incident database is a per-run artefact; the
+# structured log is the evaluation harness's input and can get large.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.log
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
 .venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+venv/
+env/
 *.egg-info/
-.installed.cfg
-*.egg
+.mypy_cache/
+.ruff_cache/
 .pytest_cache/
-.coverage
-htmlcov/
 
-# Duplicate / temporary scratch
-aegis-backend/
+# Transfer artefacts
+*.tar.gz
 
-# Node / Frontend
-node_modules/
-dist/
-dist-ssr/
-*.local
-
-# Environment variables & secrets
-.env
-.env.*
-!.env.example
-
-# Logs
-*.log
-
-# IDE & OS
+# Editors and OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+desktop.ini

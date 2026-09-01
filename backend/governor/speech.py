@@ -67,8 +67,16 @@ _ACTION_ONLY_CODES = frozenset(
     }
 )
 
+#: Findings whose message is already a question. Appending "do you want to go
+#: ahead anyway?" to "which one did you mean?" would ask two different
+#: questions in one breath and invite an answer to whichever was heard last --
+#: which, for a confirmation, is the failure this finding exists to prevent.
+_SELF_CLOSING_CODES = frozenset({RiskFindingCode.AMBIGUOUS_CONFIRMATION})
+
 
 def _closer_for(verdict: RiskVerdict, action: GovernorAction) -> str:
+    if any(code in _SELF_CLOSING_CODES for code in verdict.codes):
+        return ""
     concerns_an_action = any(code in _ACTION_ONLY_CODES for code in verdict.codes)
     table = _ACTION_CLOSERS if concerns_an_action else _CLAIM_CLOSERS
     return table[action]
@@ -99,10 +107,9 @@ def build_intervention_text(
     lead = findings[0]
     rest = findings[1:]
 
-    # Fit the reasons first, then announce how many there actually are. The
-    # announcement has to match what gets said: promising "two issues" and
-    # then listing three (or one) is the kind of detail that makes a system
-    # sound unreliable in the exact moment it needs to be believed.
+    # The most severe finding is mandatory. It sets the tier of the whole
+    # intervention, so dropping it in favour of a cheaper set would make
+    # AEGIS say "quick check" about something that warranted "hold".
     messages = [lead.message]
     single = _compose(opener, messages, closer)
     if _byte_length(single) > max_bytes:
@@ -114,16 +121,95 @@ def build_intervention_text(
                 max_bytes=max_bytes,
             )
 
-    candidate = single
-    for finding in rest:
-        attempt_messages = messages + [finding.message]
-        attempt = _compose(opener, attempt_messages, closer)
-        if _byte_length(attempt) > max_bytes:
-            break
-        messages = attempt_messages
-        candidate = attempt
+    # Everything else competes for what is left of the 512 bytes. Choosing
+    # greedily by severity is the obvious approach and it is wrong: one
+    # verbose HIGH can crowd out two short findings that together say more.
+    # This is a 0/1 knapsack — items with a value and a byte cost, one fixed
+    # capacity — so it is solved as one, exactly, by dynamic programming.
+    # n is the number of findings on a single action, so the table is tiny
+    # and an exact solve costs less than the string building around it.
+    if rest:
+        # The budget has to be measured against the *widest* frame the final
+        # sentence could take. The count word grows with the number of
+        # findings ("two" -> "three"), so sizing the headroom against the
+        # one-finding frame would let an optimal pack land two bytes over the
+        # cap — which, at 512, is the difference between speaking and raising
+        # SpeechTooLongError in front of the room.
+        frame = max(
+            _byte_length(_compose(opener, messages, closer, count=count))
+            for count in range(2, len(findings) + 1)
+        )
+        chosen = _select_within_budget(rest, max_bytes - frame)
+        messages.extend(finding.message for finding in chosen)
 
-    return candidate
+    spoken = _compose(opener, messages, closer)
+    # The packing is exact, so this cannot trip; it is asserted anyway because
+    # a silent overrun here is a rejected ``speak`` call at the worst moment.
+    if _byte_length(spoken) > max_bytes:  # pragma: no cover - guarded by construction
+        raise SpeechTooLongError(
+            "composed intervention exceeded the speak budget",
+            bytes=_byte_length(spoken),
+            max_bytes=max_bytes,
+        )
+    return spoken
+
+
+#: What one finding is worth saying. HIGH dominates MEDIUM by more than two
+#: to one, so the solver never trades a severe finding for a pair of mild
+#: ones; the flat bonus breaks ties toward saying *more*, since two reasons
+#: at equal value carry more information than one.
+_TIER_VALUE: dict[RiskTier, int] = {RiskTier.HIGH: 100, RiskTier.MEDIUM: 40}
+_ITEM_BONUS = 1
+
+
+def _select_within_budget(findings: Sequence[RiskFinding], capacity_bytes: int) -> list[RiskFinding]:
+    """Exact 0/1 knapsack over the remaining speech budget.
+
+    Weight is what the finding actually costs once rendered — the sentence
+    plus the space that joins it — not the raw message length, because
+    budgeting against a number that differs from what gets transmitted is how
+    an intervention ends up one byte over the limit at the worst moment.
+    """
+    if capacity_bytes <= 0:
+        return []
+
+    items: list[tuple[RiskFinding, int, int]] = []
+    for finding in findings:
+        cost = _byte_length(" " + _sentence(finding.message))
+        if cost <= capacity_bytes:
+            items.append((finding, cost, _TIER_VALUE.get(finding.tier, 10) + _ITEM_BONUS))
+    if not items:
+        return []
+
+    # best[c] = maximum value achievable using exactly the items considered
+    # so far within capacity c. Standard one-dimensional formulation,
+    # iterating capacity downward so each item is used at most once.
+    best = [0] * (capacity_bytes + 1)
+    keep: list[list[bool]] = []
+
+    for _finding, cost, value in items:
+        taken = [False] * (capacity_bytes + 1)
+        for capacity in range(capacity_bytes, cost - 1, -1):
+            candidate = best[capacity - cost] + value
+            if candidate > best[capacity]:
+                best[capacity] = candidate
+                taken[capacity] = True
+        keep.append(taken)
+
+    # Walk the decision table back to recover which items the optimum used.
+    selected: list[RiskFinding] = []
+    capacity = capacity_bytes
+    for index in range(len(items) - 1, -1, -1):
+        if keep[index][capacity]:
+            finding, cost, _value = items[index]
+            selected.append(finding)
+            capacity -= cost
+
+    selected.reverse()
+    # Severity order for delivery: the set is chosen by value, but it is read
+    # out worst-first, because that is the order a listener needs it in.
+    selected.sort(key=lambda finding: (-finding.tier.rank, finding.code.value))
+    return selected
 
 
 #: Spoken counts. Beyond three, "a few" is both shorter and more natural than
@@ -131,13 +217,25 @@ def build_intervention_text(
 _COUNT_WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
 
 
-def _compose(opener: str, messages: Sequence[str], closer: str) -> str:
-    if len(messages) == 1:
+def _compose(
+    opener: str,
+    messages: Sequence[str],
+    closer: str,
+    *,
+    count: Optional[int] = None,
+) -> str:
+    """Assemble the sentence.
+
+    ``count`` overrides the spoken count word, which is what lets the budget
+    be measured against a frame wider than the messages currently in hand.
+    """
+    if len(messages) == 1 and count is None:
         # A single reason follows the em-dash as a continuation, so it is not
         # capitalised: "Hold — telemetry shows...", not "Hold — Telemetry".
         return _assemble(opener, [_sentence(messages[0], capitalise=False)], closer)
-    count = _COUNT_WORDS.get(len(messages), "a few")
-    prefix = f"{opener} {count} issues."
+    spoken_count = max(count if count is not None else len(messages), 2)
+    count_word = _COUNT_WORDS.get(spoken_count, "a few")
+    prefix = f"{opener} {count_word} issues."
     bodies = [_sentence(message) for message in messages]
     return _assemble(prefix, bodies, closer)
 
@@ -193,7 +291,7 @@ def describe_no_intervention(verdict: RiskVerdict) -> str:
 
 
 def _assemble(opener: str, bodies: Sequence[str], closer: str) -> str:
-    chunks = [opener.strip()] + [body for body in bodies] + ([closer] if closer else [])
+    chunks = [opener.strip(), *bodies, *([closer] if closer else [])]
     return " ".join(chunk for chunk in chunks if chunk).strip()
 
 

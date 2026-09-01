@@ -138,8 +138,25 @@ CREATE INDEX IF NOT EXISTS idx_hypotheses_target      ON hypotheses (target_ref)
 CREATE INDEX IF NOT EXISTS idx_actions_status         ON proposed_actions (status, timestamp);
 CREATE INDEX IF NOT EXISTS idx_actions_target         ON proposed_actions (target_ref);
 CREATE INDEX IF NOT EXISTS idx_decisions_target       ON decisions (target_ref, timestamp);
-CREATE INDEX IF NOT EXISTS idx_evidence_metric        ON evidence (metric_name, timestamp);
+-- Covers the "current reading of each metric" window function: the
+-- partition is already in ranking order, so the query is one indexed pass
+-- rather than a sort per evaluation.
+CREATE INDEX IF NOT EXISTS idx_evidence_metric_recent ON evidence (metric_name, timestamp DESC);
+
+-- The reverse edge of the justification graph. When a hypothesis is
+-- invalidated, this index answers "which unresolved actions rested on it"
+-- without scanning every action in the incident. Partial, because the only
+-- rows ever queried are the pending ones.
+CREATE INDEX IF NOT EXISTS idx_actions_justification  ON proposed_actions (justifying_hypothesis_id)
+    WHERE status = 'pending' AND justifying_hypothesis_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_interventions_decided  ON interventions (decided_at);
+
+-- "When did AEGIS last raise this action out loud?" -- the reference moment
+-- the confirmation policy measures a bare "go ahead" against. Partial,
+-- because only interventions that actually reached the room count: a
+-- suppressed or queued decision was never live in the conversation.
+CREATE INDEX IF NOT EXISTS idx_interventions_subject  ON interventions (subject_claim_id, decided_at DESC)
+    WHERE subject_claim_id IS NOT NULL AND spoken_text IS NOT NULL;
 """
 
 MIGRATIONS: tuple[str, ...] = (_MIGRATION_1,)

@@ -14,11 +14,11 @@ at this request volume.
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, Sequence, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.common.models import ExtractedClaim, TranscriptEvent
+from backend.common.models import ExtractedClaim
 
 
 class ExtractionContext(BaseModel):

@@ -190,6 +190,13 @@ class RiskFindingCode(str, Enum):
     EVIDENCE_CONTRADICTION = "evidence_contradiction"
     EVIDENCE_CONTRADICTION_LOW_CERTAINTY = "evidence_contradiction_low_certainty"
 
+    #: A human said something that reads as a decision, but which action it
+    #: answers cannot be established. This is a finding rather than a special
+    #: case because it is a risk in exactly the same sense as the others: the
+    #: cheap resolution is to guess, and guessing here attaches a person's
+    #: "yes" to an action they were not talking about.
+    AMBIGUOUS_CONFIRMATION = "ambiguous_confirmation"
+
 
 class InterventionOutcome(str, Enum):
     """Why a governor decision did or did not reach the humans -- recorded
@@ -202,3 +209,8 @@ class InterventionOutcome(str, Enum):
     QUEUED_RATE_LIMITED = "queued_rate_limited"
     DROPPED_STALE_ON_REPLAY = "dropped_stale_on_replay"
     DELIVERY_FAILED = "delivery_failed"
+
+    #: Decided, but not worth saying late. Some interventions only make sense
+    #: in the moment -- asking "which one did you mean?" forty-five seconds
+    #: after the question was asked is worse than staying quiet.
+    SUPPRESSED_NOT_WORTH_SAYING_LATE = "suppressed_not_worth_saying_late"

@@ -215,13 +215,10 @@ class AgoraClient:
                 status_code=response.status_code,
             )
         if response.status_code >= 400:
-            import json
-            try:
-                err_body = response.json()
-            except Exception:
-                err_body = response.text
+            # Status code only. A response body can echo the request, and the
+            # request carries an Authorization header.
             raise AgoraError(
-                f"agora {what} failed: {err_body}", operation=what, status_code=response.status_code
+                f"agora {what} failed", operation=what, status_code=response.status_code
             )
 
         if not response.content:

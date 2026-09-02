@@ -138,6 +138,7 @@ class AgoraConfig:
     channel_name: str
     customer_id: Secret
     customer_secret: Secret
+    pipeline_id: str = ""
     app_certificate: Secret = Secret("")
     base_url: str = "https://api.agora.io"
     request_timeout_seconds: float = 8.0
@@ -334,6 +335,7 @@ def load_config(
         channel_name=_get(merged, "AGORA_CHANNEL_NAME") or "aegis-incident",
         customer_id=Secret(_get(merged, "AGORA_CUSTOMER_ID") or ""),
         customer_secret=Secret(_get(merged, "AGORA_CUSTOMER_SECRET") or ""),
+        pipeline_id=_get(merged, "AGORA_PIPELINE_ID") or "",
         app_certificate=Secret(_get(merged, "AGORA_APP_CERTIFICATE") or ""),
         base_url=_get(merged, "AGORA_BASE_URL") or "https://api.agora.io",
         request_timeout_seconds=_get_float(merged, "AGORA_TIMEOUT_SECONDS", 8.0, minimum=0.5),

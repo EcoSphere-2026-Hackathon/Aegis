@@ -95,28 +95,11 @@ class AgoraClient:
         channel: Optional[str] = None,
         agent_uid: Optional[str] = None,
         name: str = "aegis",
+        token: Optional[str] = None,
         silent_by_default: bool = True,
         extra_properties: Optional[Mapping[str, Any]] = None,
     ) -> str:
-        """Put the AEGIS agent into the channel. Returns the agent id.
-
-        Three parts of this payload are load-bearing and easy to get wrong:
-
-        ``remote_rtc_uids: ["*"]``
-            Subscribe to *every* human in the channel. Without it the agent
-            hears one participant, and a two-person incident bridge silently
-            becomes a one-person one.
-        ``enable_rtm`` + ``data_channel: "rtm"``
-            Transcripts arrive over RTM signalling. The alternative data
-            stream mode is documented as not scaling past a single user, so
-            it is not an option here.
-        ``turn_detection.start_of_speech.mode: "manual"``
-            The candidate mechanism for silence-by-default: the agent must
-            not answer merely because someone stopped talking. This is the
-            single most important unverified assumption in the integration;
-            if the spike shows it does not suppress unsolicited turns, the
-            fallback is to bypass the agent's built-in LLM slot entirely.
-        """
+        """Put the AEGIS agent into the channel. Returns the agent id."""
         payload: dict[str, Any] = {
             "name": name,
             "properties": {
@@ -133,11 +116,11 @@ class AgoraClient:
             },
         }
 
-        if silent_by_default:
-            payload["properties"]["turn_detection"] = {
-                "type": "agent_adaptive",
-                "config": {"start_of_speech": {"mode": "manual"}},
-            }
+        if self._config.pipeline_id:
+            payload["pipeline_id"] = self._config.pipeline_id
+
+        if token:
+            payload["properties"]["token"] = token
 
         if extra_properties:
             payload["properties"].update(dict(extra_properties))
@@ -232,10 +215,13 @@ class AgoraClient:
                 status_code=response.status_code,
             )
         if response.status_code >= 400:
-            # Status code only. A response body can echo the request, and the
-            # request carries an Authorization header.
+            import json
+            try:
+                err_body = response.json()
+            except Exception:
+                err_body = response.text
             raise AgoraError(
-                f"agora {what} failed", operation=what, status_code=response.status_code
+                f"agora {what} failed: {err_body}", operation=what, status_code=response.status_code
             )
 
         if not response.content:

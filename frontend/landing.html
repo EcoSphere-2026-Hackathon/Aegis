@@ -66,34 +66,60 @@
     <div class="hero-grid">
 
       <div class="hero-copy">
-        <div class="section-badge">
-          <span class="badge-dot"></span>
+        <div class="hero-badge">
+          <span class="hero-badge-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L3 7V12C3 17.5 7 21.5 12 23C17 21.5 21 17.5 21 12V7L12 2Z" stroke="#E8A33D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
           <span class="hero-eyebrow">joins the call · speaks once · executes nothing</span>
         </div>
-        <h1 id="hero-title">Reasoning under uncertainty.<br /><em>Authority never leaves the room.</em></h1>
-        <p class="hero-lede">
-          AEGIS sits on a live incident bridge. It builds a picture of what has actually been
-          established — from what people say and what telemetry measures — and interrupts, out loud,
-          when a proposed action rests on something that isn't true.
-        </p>
-        <p class="hero-lede hero-lede-tight">
-          Nobody talks to it. It has no code path to act on the systems being discussed.
-          <strong>The only evidence it is working is that it stays quiet until the moment it shouldn't.</strong>
-        </p>
 
-        <div class="hero-axiom">
-          <span class="axiom-item">AI interpretation</span>
-          <span class="axiom-neq">≠</span>
-          <span class="axiom-item">deterministic authorization</span>
-          <span class="axiom-neq">≠</span>
-          <span class="axiom-item">human authorization</span>
-          <span class="axiom-neq">≠</span>
-          <span class="axiom-item axiom-exec">execution</span>
+        <h1 id="hero-title">Reasoning under uncertainty.<br /><em>Authority never leaves the room.</em></h1>
+
+        <div class="hero-body">
+          <p class="hero-lede">
+            AEGIS sits on a live incident bridge. It builds a picture of what has actually been
+            established — from what people say and what telemetry measures — and interrupts, out loud,
+            when a proposed action rests on something that isn't true.
+          </p>
+          <p class="hero-lede hero-lede-tight">
+            Nobody talks to it. It has no code path to act on the systems being discussed.
+            <strong>The only evidence it is working is that it stays quiet until the moment it shouldn't.</strong>
+          </p>
+        </div>
+
+        <div class="hero-axiom-card">
+          <div class="hero-axiom-head">
+            <span class="axiom-kicker">Core System Axiom</span>
+            <span class="axiom-tag">Non-Negotiable</span>
+          </div>
+          <div class="hero-axiom">
+            <div class="axiom-step">
+              <span class="axiom-num">01</span>
+              <span class="axiom-item">AI interpretation</span>
+            </div>
+            <span class="axiom-neq" aria-hidden="true">≠</span>
+            <div class="axiom-step">
+              <span class="axiom-num">02</span>
+              <span class="axiom-item">deterministic authorization</span>
+            </div>
+            <span class="axiom-neq" aria-hidden="true">≠</span>
+            <div class="axiom-step">
+              <span class="axiom-num">03</span>
+              <span class="axiom-item">human authorization</span>
+            </div>
+            <span class="axiom-neq" aria-hidden="true">≠</span>
+            <div class="axiom-step axiom-step-exec">
+              <span class="axiom-num">04</span>
+              <span class="axiom-item axiom-exec">execution</span>
+            </div>
+          </div>
         </div>
 
         <div class="hero-cta">
-          <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
-          <a class="btn btn-secondary btn-lg" href="#thinking">Explore how AEGIS works <span aria-hidden="true">↓</span></a>
+          <a class="btn btn-primary btn-hero-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
+          <a class="btn btn-secondary btn-hero-lg" href="#thinking">Explore how AEGIS works <span aria-hidden="true">↓</span></a>
         </div>
       </div>
 

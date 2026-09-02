@@ -435,25 +435,72 @@ body.landing {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--section-pad-y) 0;
+  padding: clamp(32px, 5vh, 60px) 0;
   scroll-snap-align: start;
 }
 
 .hero-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
-  gap: clamp(20px, 3.5vw, 48px);
-  align-items: center;
+  grid-template-columns: minmax(0, 1.14fr) minmax(0, 0.86fr);
+  gap: clamp(28px, 4vw, 56px);
+  align-items: stretch;
   position: relative;
   z-index: 2;
 }
 
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+  min-height: 520px;
+}
+
+/* Background shield watermark motif for architectural depth */
+.hero-copy::before {
+  content: "";
+  position: absolute;
+  right: -30px;
+  top: 15%;
+  width: 260px;
+  height: 320px;
+  background: radial-gradient(ellipse at center, rgba(232, 163, 61, 0.05) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(232, 163, 61, 0.28);
+  border-left: 3px solid var(--accent);
+  background: rgba(10, 18, 42, 0.8);
+  backdrop-filter: blur(8px);
+  margin-bottom: clamp(14px, 2vh, 22px);
+  align-self: flex-start;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.hero-badge-mark { display: flex; align-items: center; justify-content: center; }
+.hero-badge .hero-eyebrow {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-navy);
+}
+
 .hero h1 {
-  margin: 0 0 14px;
+  margin: 0 0 clamp(16px, 2.2vh, 24px);
   font-family: var(--display);
-  font-size: clamp(27px, 3.3vw, 44px);
+  font-size: clamp(34px, 3.8vw, 52px);
   font-weight: 550;
-  line-height: 1.1;
+  line-height: 1.12;
   letter-spacing: -.02em;
   color: var(--text-navy);
   text-wrap: balance;
@@ -462,43 +509,99 @@ body.landing {
   font-style: italic;
   font-weight: 400;
   color: var(--accent);
+  display: inline-block;
 }
 
+.hero-body {
+  margin-bottom: clamp(16px, 2.4vh, 24px);
+}
 .hero-lede {
   margin: 0;
-  max-width: 52ch;
-  font-size: 14.5px;
-  line-height: 1.55;
+  max-width: 54ch;
+  font-size: clamp(14.5px, 1.1vw, 16.5px);
+  line-height: 1.6;
   color: var(--text-navy-muted);
 }
-.hero-lede + .hero-lede { margin-top: 8px; }
+.hero-lede + .hero-lede { margin-top: 10px; }
 .hero-lede strong { color: var(--text-navy); font-weight: 600; }
+
+.hero-axiom-card {
+  border: 1px solid var(--border-navy);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 18, 42, 0.75);
+  backdrop-filter: blur(10px);
+  padding: 12px 14px;
+  margin-bottom: clamp(18px, 2.8vh, 28px);
+  box-shadow: 0 4px 16px rgba(5, 10, 24, 0.25);
+}
+.hero-axiom-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.axiom-kicker {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+.axiom-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-navy-faint);
+  border: 1px solid var(--border-navy);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
 
 .hero-axiom {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
-  margin: 14px 0 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border-navy);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--bg-navy-inset);
   font-family: var(--mono);
   font-size: 10.5px;
-  letter-spacing: .06em;
-  text-transform: uppercase;
+  letter-spacing: .04em;
 }
-.hero-axiom .axiom-item { color: var(--text-navy-muted); }
-.hero-axiom .axiom-neq { color: var(--accent); font-weight: bold; }
-.hero-axiom .axiom-exec { color: var(--high); font-weight: 600; }
+.axiom-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.axiom-num { font-size: 9px; color: var(--accent); font-weight: 600; }
+.axiom-item { color: var(--text-navy-muted); font-size: 10.5px; }
+.axiom-step-exec {
+  border-color: rgba(198, 67, 46, 0.35);
+  background: rgba(198, 67, 46, 0.08);
+}
+.axiom-exec { color: var(--high); font-weight: 600; }
+.axiom-neq { color: var(--accent); font-weight: bold; font-size: 12px; }
 
 .hero-cta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.btn-hero-lg {
+  padding: 12px 24px;
+  font-size: 14.5px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
 }
 
 /* ── Hero Spine Frame (Reasoning Stations) ────────────────────────────── */

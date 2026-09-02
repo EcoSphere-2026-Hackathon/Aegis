@@ -41,7 +41,7 @@
       <a href="#overview">Overview</a>
       <a href="#thinking">How it thinks</a>
       <a href="#architecture">Architecture</a>
-      <a href="#console">Command</a>
+      <a href="#stage">Command</a>
     </nav>
     <a class="btn btn-primary nav-cta" href="/command" data-enter>
       <span>Enter Command</span>
@@ -466,9 +466,16 @@
   </div>
 </section>
 
+<!-- ══ SEAM TRANSITION (05 ATTRIBUTION // 06 GOVERNANCE) ═══════════════════ -->
+<div class="section-seam-divider" aria-hidden="true">
+  <span class="seam-line"></span>
+  <span class="seam-pill">05 · ATTRIBUTION <em class="seam-sep">//</em> 06 · GOVERNANCE</span>
+  <span class="seam-line"></span>
+</div>
+
 <!-- ══ INTERVENTION GOVERNOR (INVERSE SECTION: DEEP DESIGNED NAVY) ═════════ -->
 
-<section class="section section-navy" id="governor" aria-labelledby="governor-title">
+<section class="section section-navy section-governor" id="governor" aria-labelledby="governor-title">
   <div class="section-bg-pattern" aria-hidden="true"></div>
   <div class="section-container">
     <p class="section-kicker">The intervention governor</p>
@@ -518,26 +525,12 @@
   </div>
 </section>
 
-<!-- ══ LIVE INCIDENT COMMAND ══════════════════════════════════════════════
+<!-- ══ LIVE INCIDENT COMMAND WALKTHROUGH ══════════════════════════════════
      The stage below films the real operator console. The markup inside .film
      is the same markup, with the same classes, as index.html — so it inherits
      styles.css and cannot drift from the console the backend serves at
      /command. Only the ids differ (f- prefix) so the two can coexist.
 ─────────────────────────────────────────────────────────────────────────── -->
-
-<section class="section section-light section-flush" id="console" aria-labelledby="console-title">
-  <div class="section-container">
-    <p class="section-kicker">Live incident command</p>
-    <h2 id="console-title">Enough theory. This is the console.</h2>
-    <p class="lede">Not a screenshot and not a mockup — the markup below is the operator console's own
-      markup, with the same classes from the same stylesheet, replaying the rehearsed golden demo that
-      ships in the repository. When a backend is serving this page it reads live topology, telemetry,
-      health and performance figures from the API rather than the shipped copies.</p>
-    <div class="cta cta-inline">
-      <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
-    </div>
-  </div>
-</section>
 
 <section class="stage" id="stage" aria-label="AEGIS incident walkthrough">
 
@@ -892,22 +885,24 @@
   </div>
 </section>
 
-<!-- ══ FINAL CTA (INVERSE SECTION: FULL-BLEED DEEP DESIGNED NAVY) ═══════ -->
+<!-- ══ FINAL CTA (COMPACT CARD WITH SYMMETRICAL OFF-WHITE MARGINS) ═══════ -->
 
-<section class="section section-closer section-navy" id="closer" aria-labelledby="closer-title">
-  <div class="section-bg-pattern" aria-hidden="true"></div>
+<section class="section section-closer-wrap" id="closer-section" aria-labelledby="closer-title">
   <div class="section-container">
-    <div class="closer-content">
-      <div class="closer-badge">
-        <span class="badge-dot"></span>
-        <span>INCIDENT OPERATIONS</span>
-      </div>
-      <h2 id="closer-title">Ready to enter the incident?</h2>
-      <p class="closer-lede">The console is the operational application. It reads authoritative state from the API,
-        takes typed turns through the same pipeline a spoken one would, and records who authorized what.</p>
-      <div class="closer-cta">
-        <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
-        <a class="btn btn-secondary btn-lg" href="/api/state">Inspect raw state</a>
+    <div class="closer-card section-navy" id="closer">
+      <div class="section-bg-pattern" aria-hidden="true"></div>
+      <div class="closer-content">
+        <div class="closer-badge">
+          <span class="badge-dot"></span>
+          <span>INCIDENT OPERATIONS</span>
+        </div>
+        <h2 id="closer-title">Ready to enter the incident?</h2>
+        <p class="closer-lede">The console is the operational application. It reads authoritative state from the API,
+          takes typed turns through the same pipeline a spoken one would, and records who authorized what.</p>
+        <div class="closer-cta">
+          <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
+          <a class="btn btn-secondary btn-lg" href="/api/state">Inspect raw state</a>
+        </div>
       </div>
     </div>
   </div>

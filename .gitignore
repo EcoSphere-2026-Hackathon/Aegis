@@ -21,6 +21,9 @@ env/
 .ruff_cache/
 .pytest_cache/
 
+# Browser build dependencies are reproducible from frontend/package-lock.json.
+frontend/node_modules/
+
 # Transfer artefacts
 *.tar.gz
 

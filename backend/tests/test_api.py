@@ -98,6 +98,18 @@ class ReadRouteTests(ApiTestCase):
         kinds = {edge["type"] for edge in body["edges"]}
         self.assertEqual(kinds, {"depends_on", "reads_schema", "compatible_with"})
 
+
+class VoiceSessionRouteTests(ApiTestCase):
+    def test_voice_routes_fail_closed_without_complete_server_configuration(self) -> None:
+        response = self.post("/api/voice/sessions", {"participant_uid": "1001"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "api_error")
+        self.assertIn("AGORA_APP_CERTIFICATE", response.json()["error"]["message"])
+
+    def test_voice_routes_remain_protected_by_the_ingest_token(self) -> None:
+        response = self.post("/api/voice/sessions", {"participant_uid": "1001"}, authed=False)
+        self.assertEqual(response.status_code, 401)
+
     def test_telemetry_lists_exactly_the_four_fixed_metrics(self) -> None:
         metrics = self.client.get("/api/telemetry").json()["metrics"]
         self.assertEqual(

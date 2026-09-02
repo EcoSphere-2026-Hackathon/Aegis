@@ -16,6 +16,7 @@ from backend.common.clock import SYSTEM_CLOCK, Clock
 from backend.common.config import AppConfig, load_config
 from backend.common.logging import get_logger
 from backend.common.metrics import Metrics
+from backend.agora.sessions import SessionAwareSpeechSink, VoiceSessionManager
 from backend.extraction.contracts import ExtractionProvider
 from backend.extraction.providers.deterministic import DeterministicProvider
 from backend.extraction.service import ExtractionService
@@ -44,6 +45,7 @@ class AegisRuntime:
     events: EventBus
     sink: InterventionSink
     metrics: Metrics
+    voice_sessions: Optional[VoiceSessionManager] = None
 
     def reset(self) -> None:
         """Start a fresh incident without restarting the process.
@@ -67,6 +69,8 @@ class AegisRuntime:
         _log.info("incident reset", incident_id=self.config.incident_id)
 
     def close(self) -> None:
+        if self.voice_sessions:
+            self.voice_sessions.close()
         self.store.close()
 
 
@@ -123,7 +127,16 @@ def build_runtime(
         metrics=metrics,
     )
 
-    resolved_sink = sink or RecordingSink(clock=clock)
+    voice_sessions = None
+    if sink is not None:
+        resolved_sink = sink
+    elif config.agora.is_authenticated and config.agora.can_issue_client_tokens:
+        voice_sessions = VoiceSessionManager(config.agora)
+        resolved_sink = SessionAwareSpeechSink(
+            voice_sessions, config.incident_id, RecordingSink(clock=clock)
+        )
+    else:
+        resolved_sink = RecordingSink(clock=clock)
     pipeline = IncidentPipeline(
         store=store,
         extraction=extraction,
@@ -148,4 +161,5 @@ def build_runtime(
         events=events,
         sink=resolved_sink,
         metrics=metrics,
+        voice_sessions=voice_sessions,
     )

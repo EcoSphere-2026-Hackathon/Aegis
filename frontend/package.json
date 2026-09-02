@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:voice": "esbuild ./voice.js --bundle --format=iife --target=es2020 --legal-comments=none --outfile=voice.bundle.js",
+    "test:voice": "node --test transcript_relay.test.js voice_token_renewal.test.js"
+  },
+  "dependencies": {
+    "agora-agent-client-toolkit": "1.2.0",
+    "agora-rtc-sdk-ng": "4.24.3",
+    "agora-rtm": "2.2.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

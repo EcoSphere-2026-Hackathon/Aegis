@@ -20,6 +20,10 @@ uvicorn>=0.27
 # Chosen over requests for first-class timeouts on every call.
 httpx>=0.26
 
+# Official Agora Conversational AI server SDK. It supplies the audited
+# AccessToken2 builders used for browser RTC/RTM session credentials.
+agora-agents>=2.7,<3.0
+
 # Notes on what is deliberately absent:
 #   - No LLM vendor SDK. The extraction provider speaks the OpenAI-compatible
 #     /chat/completions shape over httpx, which every major vendor and local

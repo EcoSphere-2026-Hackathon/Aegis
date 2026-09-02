@@ -138,11 +138,13 @@ class AgoraConfig:
     channel_name: str
     customer_id: Secret
     customer_secret: Secret
+    app_certificate: Secret = Secret("")
     base_url: str = "https://api.agora.io"
     request_timeout_seconds: float = 8.0
     speak_max_bytes: int = 512
     enable_metrics: bool = True
     agent_uid: str = "9000"
+    token_ttl_seconds: int = 3600
 
     @property
     def is_authenticated(self) -> bool:
@@ -154,6 +156,17 @@ class AgoraConfig:
                 "Agora REST calls need AGORA_CUSTOMER_ID and AGORA_CUSTOMER_SECRET "
                 "(Console → Developer Toolkit → RESTful API), not the App Certificate",
                 variables=["AGORA_CUSTOMER_ID", "AGORA_CUSTOMER_SECRET"],
+            )
+
+    @property
+    def can_issue_client_tokens(self) -> bool:
+        return bool(self.app_id) and bool(self.app_certificate)
+
+    def require_token_issuer(self) -> None:
+        if not self.can_issue_client_tokens:
+            raise ConfigError(
+                "Agora RTC/RTM token issuance needs AGORA_APP_ID and AGORA_APP_CERTIFICATE",
+                variables=["AGORA_APP_ID", "AGORA_APP_CERTIFICATE"],
             )
 
 
@@ -244,6 +257,10 @@ class AppConfig:
                 "Agora Customer ID/Secret absent -- /join and /speak will fail. "
                 "Live voice is disabled; text-only pipeline still works."
             )
+        if not self.agora.can_issue_client_tokens:
+            issues.append(
+                "Agora App ID/App Certificate absent -- browser RTC/RTM voice sessions are disabled."
+            )
         if self.llm.provider != "deterministic" and not self.llm.api_key:
             issues.append(
                 f"LLM provider '{self.llm.provider}' selected but no API key set -- "
@@ -317,10 +334,12 @@ def load_config(
         channel_name=_get(merged, "AGORA_CHANNEL_NAME") or "aegis-incident",
         customer_id=Secret(_get(merged, "AGORA_CUSTOMER_ID") or ""),
         customer_secret=Secret(_get(merged, "AGORA_CUSTOMER_SECRET") or ""),
+        app_certificate=Secret(_get(merged, "AGORA_APP_CERTIFICATE") or ""),
         base_url=_get(merged, "AGORA_BASE_URL") or "https://api.agora.io",
         request_timeout_seconds=_get_float(merged, "AGORA_TIMEOUT_SECONDS", 8.0, minimum=0.5),
         enable_metrics=_get_bool(merged, "AGENT_METRICS_ENABLED", True),
         agent_uid=_get(merged, "AGORA_AGENT_UID") or "9000",
+        token_ttl_seconds=_get_int(merged, "AGORA_TOKEN_TTL_SECONDS", 3600, minimum=60),
     )
 
     llm = LlmConfig(

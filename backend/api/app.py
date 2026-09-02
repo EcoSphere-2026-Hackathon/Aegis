@@ -280,6 +280,85 @@ class AegisApi:
             202,
         )
 
+    # -- Agora voice-session routes -------------------------------------
+
+    def _voice_sessions(self):
+        manager = self._runtime.voice_sessions
+        if manager is None:
+            raise ApiError(
+                "Agora voice is not configured; set AGORA_APP_ID, AGORA_APP_CERTIFICATE, "
+                "AGORA_CUSTOMER_ID, and AGORA_CUSTOMER_SECRET on the server"
+            )
+        return manager
+
+    def _voice_payload(self, session, tokens, *, created: bool) -> dict:  # noqa: ANN001
+        return {
+            "session_id": session.session_id,
+            "incident_id": session.incident_id,
+            # App ID identifies the Agora project but grants no access; it is
+            # needed by the browser SDK, unlike the App Certificate which is
+            # intentionally never returned here.
+            "app_id": self._config.agora.app_id,
+            "channel": session.channel,
+            "participant_uid": session.participant_uid,
+            "agent_id": session.agent_id,
+            "agent_uid": session.agent_uid,
+            "rtc_token": tokens.rtc_token,
+            "rtm_token": tokens.rtm_token,
+            "expires_at": tokens.expires_at.isoformat(),
+            "state": "starting" if created else "running",
+        }
+
+    async def start_voice_session(self, request: Request) -> Response:
+        self._guard(request)
+        payload = await read_json_body(request, max_bytes=self._config.api.max_body_bytes)
+        participant_uid = str(payload.get("participant_uid") or "").strip()
+        if not participant_uid:
+            raise ApiError("participant_uid is required")
+        incident_id = str(payload.get("incident_id") or self._config.incident_id).strip()
+        if incident_id != self._config.incident_id:
+            raise ApiError("incident_id does not match this AEGIS runtime")
+        manager = self._voice_sessions()
+        session, tokens, created = await asyncio.to_thread(
+            manager.start, incident_id=incident_id, participant_uid=participant_uid
+        )
+        return _json(self._voice_payload(session, tokens, created=created), 201 if created else 200)
+
+    async def renew_voice_session(self, request: Request) -> Response:
+        self._guard(request)
+        payload = await read_json_body(request, max_bytes=self._config.api.max_body_bytes)
+        participant_uid = str(payload.get("participant_uid") or "").strip()
+        if not participant_uid:
+            raise ApiError("participant_uid is required")
+        session_id = request.path_params["session_id"]
+        session, tokens = await asyncio.to_thread(
+            self._voice_sessions().renew, session_id, participant_uid
+        )
+        return _json(self._voice_payload(session, tokens, created=False))
+
+    async def get_voice_session(self, request: Request) -> Response:
+        self._guard(request)
+        participant_uid = str(request.query_params.get("participant_uid") or "").strip()
+        if not participant_uid:
+            raise ApiError("participant_uid is required")
+        session = self._voice_sessions().get(request.path_params["session_id"], participant_uid)
+        return _json({
+            "session_id": session.session_id, "incident_id": session.incident_id,
+            "channel": session.channel, "participant_uid": session.participant_uid,
+            "agent_id": session.agent_id, "agent_uid": session.agent_uid, "state": "running",
+        })
+
+    async def stop_voice_session(self, request: Request) -> Response:
+        self._guard(request)
+        payload = await read_json_body(request, max_bytes=self._config.api.max_body_bytes)
+        participant_uid = str(payload.get("participant_uid") or "").strip()
+        if not participant_uid:
+            raise ApiError("participant_uid is required")
+        stopped = await asyncio.to_thread(
+            self._voice_sessions().stop, request.path_params["session_id"], participant_uid
+        )
+        return _json({"stopped": True, "already_stopped": not stopped})
+
     async def ingest_text(self, request: Request) -> Response:
         """The typed side-channel.
 
@@ -412,6 +491,10 @@ class AegisApi:
             Route("/api/metrics", _guarded(self.metrics), methods=["GET"]),
             Route("/api/events", _guarded(self.events), methods=["GET"]),
             Route("/api/transcript", _guarded(self.ingest_transcript), methods=["POST"]),
+            Route("/api/voice/sessions", _guarded(self.start_voice_session), methods=["POST"]),
+            Route("/api/voice/sessions/{session_id}", _guarded(self.get_voice_session), methods=["GET"]),
+            Route("/api/voice/sessions/{session_id}/renew", _guarded(self.renew_voice_session), methods=["POST"]),
+            Route("/api/voice/sessions/{session_id}", _guarded(self.stop_voice_session), methods=["DELETE"]),
             Route("/api/text", _guarded(self.ingest_text), methods=["POST"]),
             Route("/api/evidence", _guarded(self.ingest_evidence), methods=["POST"]),
             Route("/api/telemetry/set", _guarded(self.set_metric), methods=["POST"]),

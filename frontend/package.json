@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "build:voice": "esbuild ./voice.js --bundle --format=iife --target=es2020 --legal-comments=none --outfile=voice.bundle.js",
-    "test:voice": "node --test transcript_relay.test.js voice_token_renewal.test.js"
+    "test:voice": "node --test transcript_relay.test.js voice_token_renewal.test.js connection_state.test.js"
   },
   "dependencies": {
     "agora-agent-client-toolkit": "1.2.0",

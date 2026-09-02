@@ -4,6 +4,7 @@ import AgoraRTM from "agora-rtm";
 import { AgoraVoiceAI, AgoraVoiceAIEvents } from "agora-agent-client-toolkit";
 import { createTranscriptRelay } from "./transcript_relay.js";
 import { createTokenRenewer } from "./voice_token_renewal.js";
+import { createConnectionManager } from "./connection_state.js";
 
 const voiceButton = document.getElementById("voice-toggle");
 const voiceState = document.getElementById("voice-state");
@@ -60,28 +61,47 @@ async function start() {
     method: "POST",
     body: JSON.stringify({ participant_uid: clientUid }),
   });
-  const rtc = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-  const rtm = new AgoraRTM.RTM(session.app_id || "", clientUid);
-  // App ID is public; return it explicitly rather than deriving it from any secret.
-  if (!session.app_id) throw new Error("Voice session response did not include the Agora App ID.");
-  try {
-    await rtm.login({ token: session.rtm_token });
-    await rtm.subscribe(session.channel);
-    const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
-    ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {
-      history.forEach((item) => transcriptToAegis(item).catch((error) => {
-        console.warn("Transcript relay failed", error);
-      }));
+    const rtc = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    const rtm = new AgoraRTM.RTM(session.app_id || "", clientUid);
+    
+    let isAgentConnected = false;
+    const connectionManager = createConnectionManager({
+      rtc,
+      rtm,
+      onStateChange: (state) => {
+        if (state === "disconnected" || state === "failed") {
+          setState(`voice ${state}`);
+        } else if (state === "reconnecting") {
+          setState(`voice reconnecting…`, false);
+        } else if (state === "connected") {
+          setState(isAgentConnected ? "voice connected" : "voice connected (waiting for agent)");
+        } else {
+          setState(`voice ${state}…`, false);
+        }
+      }
     });
-    ai.on(AgoraVoiceAIEvents.AGENT_STATE_CHANGED, (_agentUid, event) => {
-      setState(`voice: ${event.state}`, true);
-    });
-    await rtc.join(session.app_id, session.channel, session.rtc_token, clientUid);
-    const microphone = await AgoraRTC.createMicrophoneAudioTrack();
-    await rtc.publish([microphone]);
-    await ai.subscribeMessage(session.channel);
-    await waitForAgent(rtc, session.agent_uid);
-    connection = { session, rtc, rtm, ai, microphone };
+
+    // App ID is public; return it explicitly rather than deriving it from any secret.
+    if (!session.app_id) throw new Error("Voice session response did not include the Agora App ID.");
+    try {
+      await rtm.login({ token: session.rtm_token });
+      await rtm.subscribe(session.channel);
+      const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
+      ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {
+        history.forEach((item) => transcriptToAegis(item).catch((error) => {
+          console.warn("Transcript relay failed", error);
+        }));
+      });
+      ai.on(AgoraVoiceAIEvents.AGENT_STATE_CHANGED, (_agentUid, event) => {
+        isAgentConnected = (event.state === "connected");
+        setState(`voice: ${event.state}`, true);
+      });
+      await rtc.join(session.app_id, session.channel, session.rtc_token, clientUid);
+      const microphone = await AgoraRTC.createMicrophoneAudioTrack();
+      await rtc.publish([microphone]);
+      await ai.subscribeMessage(session.channel);
+      await waitForAgent(rtc, session.agent_uid);
+      connection = { session, rtc, rtm, ai, microphone, connectionManager };
     const renewTokens = createTokenRenewer({
       session: connection.session,
       participantUid: clientUid,
@@ -102,6 +122,7 @@ async function start() {
     voiceButton.textContent = "Leave voice";
     setState("voice connected");
   } catch (error) {
+    if (connectionManager) connectionManager.destroy();
     await rtc.leave().catch(() => {});
     await rtm.logout().catch(() => {});
     await api(`/api/voice/sessions/${session.session_id}`, {
@@ -114,7 +135,10 @@ async function start() {
 async function stop() {
   if (!connection) return;
   setState("leaving voice…", false);
-  const { session, rtc, rtm, ai, microphone } = connection;
+  const { session, rtc, rtm, ai, microphone, connectionManager } = connection;
+  if (connectionManager) {
+    connectionManager.destroy();
+  }
   microphone.close();
   ai.destroy();
   await rtc.leave();

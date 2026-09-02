@@ -61509,6 +61509,44 @@
     };
   }
 
+  // connection_state.js
+  function createConnectionManager({ rtc, rtm, onStateChange }) {
+    let rtcState = "DISCONNECTED";
+    let rtmState = "DISCONNECTED";
+    const updateOverallState = () => {
+      if (rtcState === "CONNECTED" && rtmState === "CONNECTED") {
+        onStateChange("connected");
+      } else if (rtcState === "FAILED" || rtmState === "FAILED") {
+        onStateChange("failed");
+      } else if (rtcState === "RECONNECTING" || rtmState === "RECONNECTING") {
+        onStateChange("reconnecting");
+      } else if (rtcState === "CONNECTING" || rtmState === "CONNECTING") {
+        onStateChange("connecting");
+      } else if (rtcState === "DISCONNECTED" || rtmState === "DISCONNECTED" || rtcState === "DISCONNECTING" || rtmState === "DISCONNECTING") {
+        onStateChange("disconnected");
+      }
+    };
+    const handleRtcState = (curState, _revState, _reason) => {
+      rtcState = curState;
+      updateOverallState();
+    };
+    const handleRtmState = (event) => {
+      rtmState = event.state;
+      updateOverallState();
+    };
+    rtc.on("connection-state-change", handleRtcState);
+    rtm.addEventListener("status", handleRtmState);
+    return {
+      destroy: () => {
+        rtc.off("connection-state-change", handleRtcState);
+        rtm.removeEventListener("status", handleRtmState);
+      },
+      getCurrentState: () => {
+        return { rtc: rtcState, rtm: rtmState };
+      }
+    };
+  }
+
   // voice.js
   var voiceButton = document.getElementById("voice-toggle");
   var voiceState = document.getElementById("voice-state");
@@ -61561,6 +61599,22 @@
     });
     const rtc = import_agora_rtc_sdk_ng.default.createClient({ mode: "rtc", codec: "vp8" });
     const rtm = new import_agora_rtm.default.RTM(session.app_id || "", clientUid);
+    let isAgentConnected = false;
+    const connectionManager = createConnectionManager({
+      rtc,
+      rtm,
+      onStateChange: (state) => {
+        if (state === "disconnected" || state === "failed") {
+          setState(`voice ${state}`);
+        } else if (state === "reconnecting") {
+          setState(`voice reconnecting\u2026`, false);
+        } else if (state === "connected") {
+          setState(isAgentConnected ? "voice connected" : "voice connected (waiting for agent)");
+        } else {
+          setState(`voice ${state}\u2026`, false);
+        }
+      }
+    });
     if (!session.app_id) throw new Error("Voice session response did not include the Agora App ID.");
     try {
       await rtm.login({ token: session.rtm_token });
@@ -61572,6 +61626,7 @@
         }));
       });
       ai.on(AgoraVoiceAIEvents.AGENT_STATE_CHANGED, (_agentUid, event) => {
+        isAgentConnected = event.state === "connected";
         setState(`voice: ${event.state}`, true);
       });
       await rtc.join(session.app_id, session.channel, session.rtc_token, clientUid);
@@ -61579,7 +61634,7 @@
       await rtc.publish([microphone]);
       await ai.subscribeMessage(session.channel);
       await waitForAgent(rtc, session.agent_uid);
-      connection = { session, rtc, rtm, ai, microphone };
+      connection = { session, rtc, rtm, ai, microphone, connectionManager };
       const renewTokens = createTokenRenewer({
         session: connection.session,
         participantUid: clientUid,
@@ -61603,6 +61658,7 @@
       voiceButton.textContent = "Leave voice";
       setState("voice connected");
     } catch (error) {
+      if (connectionManager) connectionManager.destroy();
       await rtc.leave().catch(() => {
       });
       await rtm.logout().catch(() => {
@@ -61618,7 +61674,10 @@
   async function stop() {
     if (!connection) return;
     setState("leaving voice\u2026", false);
-    const { session, rtc, rtm, ai, microphone } = connection;
+    const { session, rtc, rtm, ai, microphone, connectionManager } = connection;
+    if (connectionManager) {
+      connectionManager.destroy();
+    }
     microphone.close();
     ai.destroy();
     await rtc.leave();

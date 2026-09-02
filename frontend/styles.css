@@ -567,6 +567,17 @@ input::placeholder { color: var(--text-faint); }
 
 .sep { opacity: .4; }
 
+/* Pushed to the right so it reads as navigation rather than as part of the
+   sentence about authorisation next to it. */
+.footer-link {
+  margin-left: auto;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 1px;
+}
+.footer-link:hover, .footer-link:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+
 .conn::before {
   content: "";
   display: inline-block;

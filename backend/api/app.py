@@ -413,9 +413,20 @@ class AegisApi:
         ]
 
         if FRONTEND_DIR.is_dir():
+            # Two pages, one origin. ``/`` is the operator console -- the
+            # thing that is live during an incident. ``/hero`` is the landing
+            # walkthrough, which replays the rehearsed demo into the console's
+            # own markup and links back to ``/``; serving it from the same
+            # process is what lets it read live topology, telemetry and
+            # metrics from the API instead of shipping a second copy of them.
             routes.append(
                 Route("/", lambda _request: FileResponse(FRONTEND_DIR / "index.html"), methods=["GET"])
             )
+            hero = FRONTEND_DIR / "hero.html"
+            if hero.is_file():
+                routes.append(
+                    Route("/hero", lambda _request: FileResponse(hero), methods=["GET"])
+                )
             routes.append(Mount("/static", app=StaticFiles(directory=str(FRONTEND_DIR))))
 
         middleware = []

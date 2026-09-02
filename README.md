@@ -31,7 +31,15 @@ python scripts/evaluate.py                          # 20 adversarial scenarios
 python scripts/eval_extraction.py                   # extraction vs a labelled set
 python scripts/check_agora.py                       # voice preflight + manual checklist
 python scripts/benchmark.py                         # latency and read-scaling
+python scripts/check_frontend.py --scenario         # both pages in a real browser
 ```
+
+`check_frontend.py` needs the server running and drives Chromium against it:
+there is no bundler here and therefore no build step to catch a broken import
+or a 404 asset, so the only way to find that class of failure is to open the
+page. It fails on any console error, page exception or failed request, and
+`--scenario` drives a whole incident through the console's own text box and
+asserts the screen follows the state.
 
 `GET /api/metrics` reports the same numbers from a running server, so every
 performance claim below can be checked rather than taken on trust.
@@ -171,7 +179,8 @@ backend/
   agora/         Conversational AI Engine client
   api/           Starlette routes, auth guard, rate limiter
   tests/         370 tests
-frontend/        zero-build operator console (served by the backend)
+frontend/        zero-build console at / and landing walkthrough at /hero
+  design/        the approved design sources the walkthrough was built from
 scripts/         golden-demo replay, evaluation harness, benchmark
 data/            hand-authored scenarios with expected outcomes
 ```
@@ -226,6 +235,40 @@ confirmation boundary. The one security control that exists is a shared
 bearer token on the ingestion endpoints, because an unauthenticated endpoint
 that accepts a `confirmation` claim is a direct path to an action being
 treated as authorised that nobody approved.
+
+---
+
+## The two pages
+
+`/` is the **operator console** -- live during an incident. It reads
+`/api/state` for authoritative state and `/api/events` (SSE) as a hint that
+something changed, never as the source of truth: rebuilding derived state
+from a partial event feed is how a UI ends up quietly disagreeing with the
+system it displays.
+
+`/hero` is the **landing walkthrough**. It replays the rehearsed golden demo
+into the console's own markup -- the same classes from the same `styles.css`,
+so the filmed console cannot drift from the real one -- and layers the
+analysis surfaces over it: the contradiction gauges, the blast radius, the
+justification chain, the 512-byte packing. Below the fold it hydrates from
+the running backend:
+
+| Panel | Reads | Falls back to |
+|---|---|---|
+| Topology explorer (reverse-BFS paths) | `GET /api/topology` | shipped 10-node fixture |
+| Filmed evidence panel | `GET /api/telemetry` | shipped metric values |
+| Extractor chip | `GET /api/health` | `deterministic` |
+| Performance strip | `GET /api/metrics` | shipped benchmark, **and says so** |
+
+That last row is the one that matters. The page claims those figures come
+from the process serving it, so when the process has not run a turn yet and
+has no stage timings, the strip says "shipped benchmark" rather than letting
+a number from a README pass as a measurement.
+
+The walkthrough is a replay and never pretends otherwise -- the transport
+reads "rehearsed demo", and every sentence it shows AEGIS speaking is
+composed the way `governor/speech.py` composes it, from findings the risk
+engine would actually produce.
 
 ---
 

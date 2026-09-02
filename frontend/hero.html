@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AEGIS — it stays quiet until it shouldn't</title>
+<meta name="description" content="AEGIS is a voice-native AI participant that joins a live incident call, builds a trustworthy picture of what has actually been established, and interrupts when a proposed action rests on something that isn't true." />
+<!-- Absolute /static paths, matching index.html: the backend serves this page
+     at /hero and the whole frontend directory at /static, so relative asset
+     references would resolve against / and 404. -->
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/hero.css" />
+</head>
+<body class="landing">
+
+<!-- ══ HERO ═══════════════════════════════════════════════════════════════
+     The stage films the real operator console. The markup inside .film is
+     the same markup, with the same classes, as index.html — so it inherits
+     styles.css and cannot drift from the console the backend serves at /.
+     Only the ids differ (f- prefix) so the two can coexist on one origin.
+─────────────────────────────────────────────────────────────────────────── -->
+<section class="stage" id="stage" aria-label="AEGIS incident walkthrough">
+
+  <div class="film" id="film" aria-hidden="true">
+    <div class="shell">
+
+      <header class="topbar">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div class="brand-text">
+            <h1>AEGIS</h1>
+            <p>Incident Commander</p>
+          </div>
+        </div>
+        <div class="status-cluster">
+          <div class="status-chip" id="f-listening" data-state="idle">
+            <span class="pulse" aria-hidden="true"></span>
+            <span class="status-label">Listening</span>
+          </div>
+          <div class="status-chip" id="f-window" data-state="open">
+            <span class="chip-key">Window</span>
+            <span class="chip-value" id="f-window-value">open</span>
+          </div>
+          <div class="status-chip">
+            <span class="chip-key">Extractor</span>
+            <span class="chip-value" id="f-provider">deterministic</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+
+        <section class="panel panel-conversation">
+          <div class="panel-head">
+            <h2>Conversation</h2>
+            <span class="count" id="f-turn-count">0 turns</span>
+          </div>
+          <div class="stream" id="f-conversation"></div>
+          <div class="composer">
+            <input type="text" placeholder="Type a note into the incident…" tabindex="-1" disabled />
+            <span class="btn btn-primary">Send</span>
+          </div>
+        </section>
+
+        <section class="panel panel-state">
+          <div class="panel-head">
+            <h2>Incident state</h2>
+            <span class="btn btn-ghost btn-sm">Refresh</span>
+          </div>
+          <div class="state-scroll">
+            <div class="state-group">
+              <div class="group-head"><h3>Theories</h3><span class="count" id="f-hypotheses-count">0</span></div>
+              <ul class="items" id="f-hypotheses"></ul>
+              <p class="group-empty" id="f-hypotheses-empty">No theories on record.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Facts</h3><span class="count" id="f-facts-count">0</span></div>
+              <ul class="items" id="f-facts"></ul>
+              <p class="group-empty" id="f-facts-empty">Nothing established yet.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Decision ledger</h3><span class="count" id="f-decisions-count">0</span></div>
+              <ul class="items" id="f-decisions"></ul>
+              <p class="group-empty" id="f-decisions-empty">Nothing decided yet.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Proposed actions</h3><span class="count" id="f-actions-count">0</span></div>
+              <ul class="items" id="f-actions"></ul>
+              <p class="group-empty" id="f-actions-empty">Nothing proposed yet.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel-interventions">
+          <div class="panel-head">
+            <h2>Interventions</h2>
+            <span class="count" id="f-interventions-count">0</span>
+          </div>
+          <div class="stream" id="f-interventions"></div>
+        </section>
+
+        <section class="panel panel-evidence">
+          <div class="panel-head">
+            <h2>Evidence</h2>
+            <span class="count" id="f-evidence-count">4</span>
+          </div>
+          <ul class="metrics" id="f-metrics"></ul>
+          <div class="submit-evidence"><span class="summary-static">＋ Submit a reading</span></div>
+        </section>
+
+      </main>
+
+      <footer class="footer">
+        <span class="conn" data-state="live">live</span>
+        <span class="sep">·</span>
+        <span>AEGIS never executes, blocks or overrides an action. Every consequential step needs an explicit human decision.</span>
+      </footer>
+
+    </div>
+  </div>
+
+  <!-- ── analysis surfaces: screen space, above the filmed console ──── -->
+
+  <div class="surface surface-contradiction" id="s-contradiction" data-accent="high" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Evidence contradiction</h3>
+      <span class="rule"></span><span class="tag">risk_engine · check 4</span>
+    </div>
+    <div class="gauge">
+      <div class="gauge-head"><span>claimed · uid 1002 · voice</span><b id="s-claimed">40%</b></div>
+      <div class="gauge-track"><div class="gauge-fill" id="s-claimed-fill" style="background:var(--medium)"></div></div>
+    </div>
+    <div class="gauge">
+      <div class="gauge-head"><span>measured · mock_telemetry · pool_utilization</span><b id="s-measured">91%</b></div>
+      <div class="gauge-track"><div class="gauge-fill" id="s-measured-fill" style="background:var(--high)"></div></div>
+    </div>
+    <p class="surface-note" id="s-contradiction-note">
+      <code>EVIDENCE_CONTRADICTION · HIGH</code><br />
+      The model produced a typed claim. Python compared it to the reading and set the tier.
+    </p>
+  </div>
+
+  <div class="surface surface-blast" id="s-blast" data-accent="high" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Blast radius · rollback core-db → v2.3</h3>
+      <span class="rule"></span><span class="tag">propagate_failure() · O(V+E)</span>
+    </div>
+    <div class="blast-canvas" id="s-blast-canvas">
+      <svg id="s-blast-edges" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="blast-counts" id="s-blast-counts">
+        <div><b id="s-count-direct" style="color:var(--high)">0</b><span>direct break</span></div>
+        <div><b id="s-count-cascade" style="color:var(--medium)">0</b><span>cascade</span></div>
+        <div><b id="s-count-total">0</b><span>total affected</span></div>
+        <div><b id="s-count-entry" style="color:var(--medium)">0</b><span>user-facing</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="surface surface-retraction" id="s-retraction" data-accent="medium" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Belief retraction</h3>
+      <span class="rule"></span><span class="tag">pending_actions_justified_by · reverse lookup</span>
+    </div>
+    <div class="chain">
+      <div class="chain-box" id="s-chain-hypothesis"><h4>hypothesis</h4><p>It is the pool — core-db</p></div>
+      <div class="chain-edge" id="s-chain-edge"><i></i><b></b><span id="s-chain-label">justifies</span></div>
+      <div class="chain-box" id="s-chain-action"><h4>pending action</h4><p>rollback core-db → v2.3</p></div>
+    </div>
+    <div class="chain-verdict" id="s-chain-verdict">
+      <code>re-evaluated</code><code>risk_engine.evaluate()</code><code class="high">HIGH</code>
+      <p>A verdict computed against a belief nobody holds any more only ever escalates — it cannot cascade.</p>
+    </div>
+  </div>
+
+  <div class="surface surface-budget" id="s-budget" data-accent="medium" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Speech budget</h3>
+      <span class="rule"></span><span class="tag">Agora speak() · 512 bytes · 0/1 knapsack</span>
+    </div>
+    <div class="budget-total"><b id="s-budget-used">0</b><span>/ 512 bytes</span></div>
+    <div class="budget-bar" id="s-budget-bar"></div>
+    <div class="budget-rows" id="s-budget-rows"></div>
+  </div>
+
+  <div class="stage-vignette"></div>
+  <div class="stage-veil" id="stage-veil"></div>
+
+  <div class="lockup lockup-open" id="lockup-open">
+    <h1>AEGIS</h1>
+    <p>it stays quiet until it shouldn't</p>
+  </div>
+
+  <div class="lockup lockup-end" id="lockup-end" style="opacity:0">
+    <h2>AEGIS</h2>
+    <p>enter the incident</p>
+    <a class="btn btn-primary btn-lg enter" href="/">Open the console</a>
+  </div>
+
+  <div class="caption-bed">
+    <p class="caption" id="caption"></p>
+  </div>
+
+</section>
+
+<div class="transport">
+  <button class="btn btn-sm" id="play" type="button" aria-label="Pause walkthrough">Pause</button>
+  <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" step="1"
+         aria-label="Scrub the walkthrough" />
+  <span class="clock" id="clock">0:00 / 1:13</span>
+  <span class="clock" id="source-note">rehearsed demo</span>
+</div>
+<div class="beat-rail" id="beat-rail" role="tablist" aria-label="Walkthrough beats"></div>
+
+<!-- ══ NARRATIVE ══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <p class="section-kicker">The problem</p>
+  <h2>Monitoring watches the system. Nobody watches the conversation.</h2>
+  <p class="lede">An incident is decided in a room, out loud, under pressure. A number gets recited from
+    memory. A theory gets restated until it sounds settled. A destructive action gets proposed on top of
+    it. Every one of those steps is invisible to a dashboard, because none of them is a metric.</p>
+  <p class="lede">AEGIS is not a notetaker and not an assistant waiting to be asked. <strong>Nobody talks
+    to it.</strong> It listens, and the only evidence it is working is that it stays quiet until the
+    moment it shouldn't.</p>
+</section>
+
+<section class="section">
+  <p class="section-kicker">How it thinks</p>
+  <h2>Interpretation, authorization and execution are different jobs.</h2>
+  <p class="lede">The LLM converts messy speech into typed claims. It never outputs a risk level and has
+    no field in its response schema in which it could. Every risk decision is made by Python comparing
+    typed fields. Every consequential action waits for an explicit human utterance.</p>
+  <ul class="pipeline">
+    <li data-layer="llm"><b>LLM</b><span>Speech → typed claims: facts, hypotheses, proposed actions, decisions.</span></li>
+    <li data-layer="python"><b>Python</b><span>Four deterministic checks over typed fields produce the verdict and its reasons.</span></li>
+    <li data-layer="python"><b>Governor</b><span>One intervention per 45s window, scheduled by utility, packed into 512 bytes.</span></li>
+    <li data-layer="human"><b>Human</b><span>Nothing is authorised without an explicit utterance naming or answering the action.</span></li>
+  </ul>
+  <p class="lede" style="margin-top:26px">AEGIS has no execution surface at all — its entire outbound
+    vocabulary is <strong>join a call</strong>, <strong>say this</strong>, <strong>leave</strong>.</p>
+</section>
+
+<section class="section">
+  <p class="section-kicker">Blast radius</p>
+  <h2>Direct dependents are not the blast radius.</h2>
+  <p class="lede">Naming only what reads the changed schema understates the damage. A multi-source
+    reverse BFS over the transposed dependency graph separates direct breakage from the cascade, and
+    calls out the entry points a failure reaches — because a failure that reaches one is a failure a
+    user sees. Click a service to walk it.</p>
+  <div class="topo">
+    <div class="topo-viewport" id="topo-viewport">
+      <canvas id="topo-canvas"></canvas>
+      <p class="topo-hint">drag to rotate · click a node</p>
+      <div class="topo-fallback">
+        <span>Canvas is unavailable in this browser. The dependency paths are listed on the right.</span>
+      </div>
+    </div>
+    <div class="topo-readout">
+      <div class="panel">
+        <div class="panel-head">
+          <h2 id="topo-selected">core-db</h2>
+          <span class="count" id="topo-summary">—</span>
+        </div>
+        <ul class="topo-paths" id="topo-paths"></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <p class="section-kicker">Engineering</p>
+  <h2>Every performance claim is checkable from a running server.</h2>
+  <p class="lede"><code>GET /api/metrics</code> reports these numbers from the process that is serving
+    this page. The working set is flat because it asks for what the checks actually read — the
+    justifying hypothesis and the decisions about this target — rather than the whole incident.</p>
+  <div class="stat-row" id="perf-stats">
+    <div><b id="perf-turn">0.43 ms</b><span>whole turn · p50</span></div>
+    <div><b id="perf-risk">0.16 ms</b><span>risk evaluation · p50</span></div>
+    <div><b id="perf-read">0.25 ms</b><span>working-set read · p50</span></div>
+    <div><b id="perf-nodes">10</b><span>topology nodes</span></div>
+    <div><b id="perf-tests">370</b><span>tests</span></div>
+  </div>
+  <p class="perf-source" id="perf-source" data-live="false">shipped benchmark — this process has not run a turn yet</p>
+  <div class="cta">
+    <a class="btn btn-primary btn-lg" href="/">Enter the incident</a>
+    <a class="btn btn-lg" href="/api/state">Inspect raw state</a>
+  </div>
+</section>
+
+<p class="footnote" id="footnote">
+  Telemetry is four fixed mocked metrics and the topology is a ten-node fixture — scope decisions,
+  disclosed rather than hidden. The walkthrough above replays the rehearsed golden demo shipped in
+  <code>data/transcripts/golden_demo.json</code>; when this page is served by a running backend it
+  reads live topology, telemetry and performance figures from the API instead of the shipped copies.
+</p>
+
+<script src="/static/topology3d.js"></script>
+<script src="/static/hero.js"></script>
+</body>
+</html>

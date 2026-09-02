@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; background: #05070a; }
+  a { color: #5b8cff; text-decoration: none; }
+  a:hover { color: #8fb0ff; }
+</style>
+<script>window.OM_SCENES = '[{"name":"Standby","dur":4.5,"desc":"Black, the AEGIS wordmark, then the quiet operator console fades up"},{"name":"FirstTurn","dur":5,"desc":"Engineer A reports 500s; a fact claim lands and AEGIS logs a silent decision"},{"name":"Claim","dur":6,"desc":"Engineer B says the pool looks fine at 40%; a hypothesis claim appears"},{"name":"Grounding","dur":7,"desc":"Telemetry reads 91% - the contradiction surface compares claimed against measured"},{"name":"Intervene1","dur":6.5,"desc":"AEGIS speaks for the first time and the rate-limit window closes"},{"name":"Rollback","dur":6,"desc":"Engineer A proposes rolling Core back; a pending action enters the ledger"},{"name":"BlastRadius","dur":9,"desc":"The dependency graph propagates the failure outward from core-db"},{"name":"Stale","dur":5.5,"desc":"The justifying hypothesis is retracted and the pending action re-enters evaluation"},{"name":"Budget","dur":4.5,"desc":"Two findings are packed into the 512-byte speech budget"},{"name":"Intervene2","dur":6.5,"desc":"The compound intervention is spoken"},{"name":"Human","dur":6,"desc":"Engineer B holds the rollback; the decision ledger records who"},{"name":"Status","dur":7,"desc":"AEGIS answers a status request, then the closing lockup"}]';</script>
+<script>window.OM_PLAYBACK = '{"mode":"loop"}';</script>
+<script>window.TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "captions": true,
+  "cameraMotion": true,
+  "motionEditor": true
+}/*EDITMODE-END*/;</script>
+</helmet>
+<x-import component-from-global-scope="AegisHero" from="./tweaks-panel.jsx ./animations-v3.jsx ./aegis-hero.jsx" hint-size="100%,100%"></x-import>
+
+</x-dc>
+</body>
+</html>

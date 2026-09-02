@@ -10,13 +10,16 @@
 <div class="shell">
 
   <header class="topbar">
-    <div class="brand">
+    <!-- The brand is the way back to the landing page. An operator who opened
+         the console directly has no other route to it, and a logo that goes
+         home is the one navigation convention nobody has to be taught. -->
+    <a class="brand" href="/" aria-label="AEGIS — back to the landing page">
       <span class="mark" aria-hidden="true"></span>
       <div class="brand-text">
         <h1>AEGIS</h1>
         <p>Incident Commander</p>
       </div>
-    </div>
+    </a>
 
     <div class="status-cluster">
       <div class="status-chip" id="listening-chip" data-state="idle">
@@ -147,9 +150,7 @@
     <span id="connection" class="conn" data-state="connecting">connecting…</span>
     <span class="sep">·</span>
     <span>AEGIS never executes, blocks or overrides an action. Every consequential step needs an explicit human decision.</span>
-    <!-- The walkthrough is otherwise unreachable from here: a judge who opens
-         the console first would never find it. -->
-    <a class="footer-link" href="/hero">Walkthrough</a>
+    <a class="footer-link" href="/">← How AEGIS works</a>
   </footer>
 
 </div>

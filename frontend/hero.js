@@ -1,7 +1,11 @@
-/* AEGIS landing walkthrough.
+/* AEGIS landing walkthrough — the filmed console section of the landing page.
  *
  * Vanilla, same reasoning as app.js: this page is served by the Python
  * backend off /static and has to run on a demo laptop with no toolchain.
+ *
+ * This file owns the stage, its transport and the topology explorer.
+ * landing.js owns every other section of the page; the two share nothing but
+ * the DOM and are safe to load in either order.
  *
  * What this file is, precisely: a *deterministic replay* of the rehearsed
  * golden demo (data/transcripts/golden_demo.json) rendered into the real
@@ -713,7 +717,13 @@
 
   /* ── transport ──────────────────────────────────────────────────────── */
 
-  const transport = { t: 0, playing: !reduced, raf: 0, last: 0, lastTick: 0 };
+  const transport = { t: 0, playing: false, raf: 0, last: 0, lastTick: 0 };
+  // Visibility drives play/pause now that the stage sits in the middle of the
+  // page rather than at the top of it -- but an explicit press of the
+  // transport wins over it. A viewer who paused to read a caption should not
+  // have the film start again under them because they scrolled two pixels.
+  let userPaused = false;
+  let stageVisible = false;
   const playBtn = $("play");
   const scrub = $("scrub");
   const clockNode = $("clock");
@@ -796,25 +806,51 @@
     }, 42);
   }
 
-  playBtn.addEventListener("click", () => setPlaying(!transport.playing));
+  /* Any deliberate interaction latches the transport: from here on the film
+   * does what the viewer last told it to, not what scrolling implies. */
+  function userSetPlaying(next) {
+    userPaused = !next;
+    setPlaying(next);
+  }
+
+  playBtn.addEventListener("click", () => userSetPlaying(!transport.playing));
   scrub.addEventListener("input", () => {
+    userPaused = true;
     seek((Number(scrub.value) / 1000) * TOTAL, { pause: true });
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
-    if (event.code === "Space") { event.preventDefault(); setPlaying(!transport.playing); }
-    else if (event.key === "ArrowRight") { seek(transport.t + 2, { pause: true }); }
-    else if (event.key === "ArrowLeft") { seek(transport.t - 2, { pause: true }); }
+    // Scoped to the stage being on screen. These shortcuts used to own the
+    // whole document, which was fine when the walkthrough *was* the page --
+    // on a twelve-section landing page it means Space stops scrolling.
+    if (!stageVisible) return;
+    if (event.code === "Space") { event.preventDefault(); userSetPlaying(!transport.playing); }
+    else if (event.key === "ArrowRight") { userPaused = true; seek(transport.t + 2, { pause: true }); }
+    else if (event.key === "ArrowLeft") { userPaused = true; seek(transport.t - 2, { pause: true }); }
   });
 
   // Playing an animation nobody is looking at wastes a demo laptop's battery
-  // and, worse, its frame budget.
+  // and, worse, its frame budget. The film is now several screens down, so
+  // this is also what stops it from having already looped twice -- or from
+  // still sitting on the opening black frame -- by the time anyone arrives.
   if (window.IntersectionObserver) {
     new IntersectionObserver((entries) => {
-      if (!entries[0].isIntersecting && transport.playing) setPlaying(false);
+      stageVisible = entries[0].isIntersecting;
+      if (!stageVisible) {
+        if (transport.playing) setPlaying(false);
+      } else if (!transport.playing && !userPaused && !reduced) {
+        setPlaying(true);
+      }
     }, { threshold: 0.15 }).observe(stage);
   }
+
+  // A background tab throttles rAF rather than stopping it, and the 24Hz
+  // guard below is a plain interval that keeps running regardless.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && transport.playing) setPlaying(false);
+    else if (!document.hidden && stageVisible && !userPaused && !reduced) setPlaying(true);
+  });
   window.addEventListener("resize", () => applyCamera(transport.t));
 
   /* ── topology explorer (the section below the hero) ──────────────────── */
@@ -935,11 +971,17 @@
   mountOrbit();
   selectNode(TARGET);
   render(0);
-  setPlaying(!reduced);
   startClock();
   if (reduced) {
     // No autoplay, and the first frame is a readable one rather than black.
     seek(CUE.grounding + 2.4, { pause: true });
+  } else if (!window.IntersectionObserver) {
+    // No visibility signal available: fall back to the old behaviour and
+    // play, rather than shipping a stage that never starts.
+    setPlaying(true);
+  } else {
+    // The observer above starts it the moment the stage is on screen.
+    setPlaying(false);
   }
   hydrate();
 })();

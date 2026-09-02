@@ -24,7 +24,13 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -413,20 +419,48 @@ class AegisApi:
         ]
 
         if FRONTEND_DIR.is_dir():
-            # Two pages, one origin. ``/`` is the operator console -- the
-            # thing that is live during an incident. ``/hero`` is the landing
-            # walkthrough, which replays the rehearsed demo into the console's
-            # own markup and links back to ``/``; serving it from the same
-            # process is what lets it read live topology, telemetry and
-            # metrics from the API instead of shipping a second copy of them.
-            routes.append(
-                Route("/", lambda _request: FileResponse(FRONTEND_DIR / "index.html"), methods=["GET"])
-            )
-            hero = FRONTEND_DIR / "hero.html"
-            if hero.is_file():
+            # Two experiences, one origin, one process.
+            #
+            #   /          the landing page -- what AEGIS is, and why the
+            #              boundary between interpretation, authorization and
+            #              execution is the entire product. Explanatory
+            #              content plus four read-only API reads.
+            #   /command   the operator console -- the thing that is live
+            #              during an incident, reading /api/state for
+            #              authoritative state and /api/events for hints.
+            #
+            # Serving both from this process is what lets the landing page
+            # read live topology, telemetry, health and metrics from the API
+            # instead of shipping a second copy of them and quietly drifting
+            # from the system it is describing.
+            landing = FRONTEND_DIR / "landing.html"
+            console = FRONTEND_DIR / "index.html"
+
+            def _page(path: Path):
+                # A factory, not an inline lambda: a lambda closing over a
+                # loop or over a name reassigned below binds late and every
+                # route ends up serving the last file.
+                return lambda _request: FileResponse(path)
+
+            if landing.is_file():
+                routes.append(Route("/", _page(landing), methods=["GET"]))
+                # ``/hero`` was the walkthrough's own route before the landing
+                # page absorbed it. Redirect rather than 404: it is in the
+                # README, and anything already linked at it should still land
+                # somewhere real.
                 routes.append(
-                    Route("/hero", lambda _request: FileResponse(hero), methods=["GET"])
+                    Route(
+                        "/hero",
+                        lambda _request: RedirectResponse("/", status_code=308),
+                        methods=["GET"],
+                    )
                 )
+            else:
+                # No landing page shipped: the console is still the product,
+                # so it keeps the root rather than the origin serving nothing.
+                routes.append(Route("/", _page(console), methods=["GET"]))
+
+            routes.append(Route("/command", _page(console), methods=["GET"]))
             routes.append(Mount("/static", app=StaticFiles(directory=str(FRONTEND_DIR))))
 
         middleware = []

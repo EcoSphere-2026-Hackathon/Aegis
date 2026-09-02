@@ -102,7 +102,20 @@ body {
   flex-shrink: 0;
 }
 
-.brand { display: flex; align-items: center; gap: 12px; }
+/* The brand is a link back to the landing page on the console, and a plain
+   div inside the filmed console on the landing page. Styled so both read
+   identically -- the film must not show a blue underlined wordmark the real
+   console does not have. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+a.brand:hover .mark { box-shadow: 0 0 0 1px rgba(255,255,255,.09) inset, 0 4px 18px rgba(91,140,255,.55); }
+a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .mark {
   width: 30px; height: 30px;

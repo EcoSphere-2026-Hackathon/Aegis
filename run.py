@@ -87,7 +87,12 @@ def main() -> int:
     port = args.port or config.api.port
 
     log_startup_banner(log, dict(iter_config_summary(config)), config.warnings())
-    print(f"\n  AEGIS console → http://{host}:{port}\n")
+    # ASCII only. A Windows console defaults to cp1252, and printing a "→"
+    # here raised UnicodeEncodeError *before* uvicorn.run -- the process
+    # exited without ever binding the port, which reads as "the server is
+    # broken" rather than "the banner is".
+    print(f"\n  AEGIS landing  -> http://{host}:{port}/")
+    print(f"  AEGIS console  -> http://{host}:{port}/command\n")
 
     uvicorn.run(create_app(config), host=host, port=port, log_level=config.log_level.lower())
     return 0

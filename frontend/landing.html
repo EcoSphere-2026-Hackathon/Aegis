@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AEGIS — it stays quiet until it shouldn't</title>
+<meta name="description" content="AEGIS is a voice-native AI participant that joins a live incident call, builds a trustworthy picture of what has actually been established, and interrupts when a proposed action rests on something that isn't true. It has no code path to act on the systems being discussed." />
+<meta name="color-scheme" content="light dark" />
+
+<!-- Google Fonts: Editorial Serif (Fraunces) + Clean Grotesque (Plus Jakarta Sans) + Tech Mono (JetBrains Mono) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400;1,9..144,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+
+<!-- Absolute /static paths, matching index.html: the backend serves this page
+     at / and the whole frontend directory at /static. Relative references
+     would resolve against the page URL and break the moment a route moves. -->
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/hero.css" />
+<link rel="stylesheet" href="/static/landing.css" />
+</head>
+<body class="landing">
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<!-- ══ NAVIGATION ═════════════════════════════════════════════════════════ -->
+
+<header class="nav" id="nav">
+  <div class="nav-container">
+    <a class="nav-brand" href="#top" aria-label="AEGIS — top of page">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L3 7V12C3 17.5 7 21.5 12 23C17 21.5 21 17.5 21 12V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="12" cy="12" r="3" fill="#E8A33D"/>
+        </svg>
+      </span>
+      <span class="nav-word">AEGIS</span>
+      <span class="nav-subtag">Incident Commander</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#thinking">How it thinks</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#console">Command</a>
+    </nav>
+    <a class="btn btn-primary nav-cta" href="/command" data-enter>
+      <span>Enter Command</span>
+      <span class="cta-arrow" aria-hidden="true">→</span>
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ══ HERO (INVERSE SECTION 1: DEEP DESIGNED NAVY) ════════════════════════
+     The visual is the reasoning pipeline itself, not decoration: seven
+     stations, each carrying the artifact that actually exists at that stage,
+     colour-coded by which layer owns it. The point the picture makes is that
+     the model owns exactly one of the seven, and it is not the one that
+     decides anything.
+─────────────────────────────────────────────────────────────────────────── -->
+
+<section class="hero section-navy" id="top" aria-labelledby="hero-title">
+  <div class="section-bg-pattern" aria-hidden="true"></div>
+  <div class="section-container">
+    <div class="hero-grid">
+
+      <div class="hero-copy">
+        <div class="section-badge">
+          <span class="badge-dot"></span>
+          <span class="hero-eyebrow">joins the call · speaks once · executes nothing</span>
+        </div>
+        <h1 id="hero-title">Reasoning under uncertainty.<br /><em>Authority never leaves the room.</em></h1>
+        <p class="hero-lede">
+          AEGIS sits on a live incident bridge. It builds a picture of what has actually been
+          established — from what people say and what telemetry measures — and interrupts, out loud,
+          when a proposed action rests on something that isn't true.
+        </p>
+        <p class="hero-lede hero-lede-tight">
+          Nobody talks to it. It has no code path to act on the systems being discussed.
+          <strong>The only evidence it is working is that it stays quiet until the moment it shouldn't.</strong>
+        </p>
+
+        <div class="hero-axiom">
+          <span class="axiom-item">AI interpretation</span>
+          <span class="axiom-neq">≠</span>
+          <span class="axiom-item">deterministic authorization</span>
+          <span class="axiom-neq">≠</span>
+          <span class="axiom-item">human authorization</span>
+          <span class="axiom-neq">≠</span>
+          <span class="axiom-item axiom-exec">execution</span>
+        </div>
+
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
+          <a class="btn btn-secondary btn-lg" href="#thinking">Explore how AEGIS works <span aria-hidden="true">↓</span></a>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <div class="spine-frame" id="l-spine-frame">
+          <div class="spine-head">
+            <span class="spine-title">one turn, end to end</span>
+            <span class="spine-legend">
+              <b data-layer="llm">model</b><b data-layer="python">deterministic</b><b data-layer="human">human</b>
+            </span>
+          </div>
+
+          <ol class="spine" id="l-spine">
+            <li class="spine-stop" data-layer="io">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Conversation</h3>
+                <p class="spine-detail">“Pool utilization looks fine, like 40%.”</p>
+              </div>
+              <span class="spine-tag">agora</span>
+            </li>
+            <li class="spine-stop" data-layer="llm">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Typed claims</h3>
+                <p class="spine-detail"><code>hypothesis · pool_utilization · 40</code></p>
+              </div>
+              <span class="spine-tag">model</span>
+            </li>
+            <li class="spine-stop" data-layer="state">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Beliefs</h3>
+                <p class="spine-detail"><code>active · uncorroborated · uid 1002</code></p>
+              </div>
+              <span class="spine-tag">state</span>
+            </li>
+            <li class="spine-stop" data-layer="state">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Evidence</h3>
+                <p class="spine-detail"><code>measured 91% · mock_telemetry</code></p>
+              </div>
+              <span class="spine-tag">state</span>
+            </li>
+            <li class="spine-stop" data-layer="python">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Risk</h3>
+                <p class="spine-detail"><code>EVIDENCE_CONTRADICTION · HIGH</code></p>
+              </div>
+              <span class="spine-tag">python</span>
+            </li>
+            <li class="spine-stop" data-layer="python">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Intervention</h3>
+                <p class="spine-detail">“Hold — telemetry shows pool utilization at 91%, not 40%.”</p>
+              </div>
+              <span class="spine-tag">governor</span>
+            </li>
+            <li class="spine-stop spine-terminal" data-layer="human">
+              <span class="spine-rail" aria-hidden="true"><i class="spark"></i></span>
+              <span class="spine-dot" aria-hidden="true"></span>
+              <div class="spine-body">
+                <h3>Human decision</h3>
+                <p class="spine-detail">awaiting an explicit utterance</p>
+              </div>
+              <span class="spine-tag">human</span>
+            </li>
+          </ol>
+
+          <p class="spine-caption" id="l-spine-caption">
+            The turn stops at the last station. There is no timeout path past it.
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══ THE PROBLEM (LIGHT SECTION: WARM IVORY) ════════════════════════════ -->
+
+<section class="section section-light" id="overview" aria-labelledby="problem-title">
+  <div class="section-container">
+    <p class="section-kicker">The problem</p>
+    <h2 id="problem-title">Interpretation is not authorization.<br />Authorization is not execution.</h2>
+    <p class="lede">An incident is decided in a room, out loud, under pressure. A number gets recited from
+      memory. A theory gets restated until it sounds settled. A destructive action gets proposed on top of
+      it. None of those steps is a metric, so none of them is visible to a dashboard.</p>
+    <p class="lede">An AI that can read that room is useful. An AI that can <em>act</em> on it has quietly
+      collapsed four different jobs into one. AEGIS holds them apart — and the last one it does not
+      implement at all.</p>
+
+    <ol class="gates" id="l-gates">
+      <li class="gate" data-verdict="pass">
+        <p class="gate-kicker">01 · model</p>
+        <h3>AI interpretation</h3>
+        <p class="gate-body">The LLM converts messy speech into typed claims — and stops there.</p>
+        <p class="gate-artifact"><code>proposed_action · rollback · core-db</code></p>
+        <p class="gate-rule">Its response schema has no risk field. There is nowhere for it to put one.</p>
+      </li>
+      <li class="gate" data-verdict="pass">
+        <p class="gate-kicker">02 · python</p>
+        <h3>Deterministic authorization</h3>
+        <p class="gate-body">Four checks over typed fields produce the tier and the reasons behind it.</p>
+        <p class="gate-artifact"><code>HIGH · blast_radius_schema_break</code></p>
+        <p class="gate-rule"><code>risk_engine</code> imports no provider and holds no connection.</p>
+      </li>
+      <li class="gate" data-verdict="halt">
+        <p class="gate-kicker">03 · human</p>
+        <h3>Human authorization</h3>
+        <p class="gate-body">An explicit utterance, attributed to a speaker, naming or answering the action.</p>
+        <p class="gate-artifact"><code>status: pending</code></p>
+        <p class="gate-rule">Silence, ambiguity and timeouts leave it pending forever. There is deliberately
+          no timeout path into resolution.</p>
+      </li>
+      <li class="gate" data-verdict="absent">
+        <p class="gate-kicker">04 · nothing</p>
+        <h3>Execution</h3>
+        <p class="gate-body">Not implemented, not stubbed, not behind a flag.</p>
+        <p class="gate-artifact"><code>— no such surface —</code></p>
+        <p class="gate-rule">The entire outbound vocabulary is <strong>join a call</strong>,
+          <strong>say this</strong>, <strong>leave</strong>.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ══ HOW AEGIS THINKS (INVERSE SECTION 2: DEEP DESIGNED NAVY) ════════════ -->
+
+<section class="section section-navy" id="thinking" aria-labelledby="thinking-title">
+  <div class="section-bg-pattern" aria-hidden="true"></div>
+  <div class="section-container">
+    <p class="section-kicker">How it thinks</p>
+    <h2 id="thinking-title">Eight stages, and the model is only allowed to do one of them.</h2>
+    <p class="lede">The LLM's entire job is the second row. Every risk decision below it is Python
+      comparing typed fields, and every consequential step waits for a person. Each stage below carries
+      the artifact it actually produces.</p>
+
+    <ol class="stages" id="l-stages">
+      <li class="stage-row" data-layer="io">
+        <span class="stage-index">01</span>
+        <div class="stage-main">
+          <h3>Speech <span aria-hidden="true">·</span> conversation</h3>
+          <p>Agora relays the room. Every utterance enters as one transcript event carrying a turn id,
+            so a retried delivery is the same turn rather than a second one.</p>
+        </div>
+        <p class="stage-artifact"><code>uid 1002 · final · voice</code></p>
+      </li>
+      <li class="stage-row" data-layer="llm">
+        <span class="stage-index">02</span>
+        <div class="stage-main">
+          <h3>Typed claims</h3>
+          <p>The only stage the model owns. Messy speech becomes typed claims: facts, hypotheses,
+            proposed actions, decisions, confirmations, holds. Anything that does not validate is dropped
+            rather than guessed at.</p>
+        </div>
+        <p class="stage-artifact"><code>{type: "hypothesis", metric_ref: "pool_utilization", value: 40}</code></p>
+      </li>
+      <li class="stage-row" data-layer="state">
+        <span class="stage-index">03</span>
+        <div class="stage-main">
+          <h3>Beliefs</h3>
+          <p>Claims become durable state — theories with a status, facts with a speaker, a decision
+            ledger, and pending actions that each record the hypothesis which justified them.</p>
+        </div>
+        <p class="stage-artifact"><code>action#7 justified_by hypothesis#a1</code></p>
+      </li>
+      <li class="stage-row" data-layer="state">
+        <span class="stage-index">04</span>
+        <div class="stage-main">
+          <h3>Evidence</h3>
+          <p>Telemetry and submitted readings are the ground truth. A claimed number and a measured
+            number stay separate objects and are never reconciled into one.</p>
+        </div>
+        <p class="stage-artifact"><code>claimed 40% · measured 91%</code></p>
+      </li>
+      <li class="stage-row" data-layer="python">
+        <span class="stage-index">05</span>
+        <div class="stage-main">
+          <h3>Risk analysis</h3>
+          <p>Four deterministic checks: contradicted evidence, unconfirmed root cause, blast radius over
+            the dependency graph, and reversal of a decision already taken. The tier and its reasons come
+            out of comparisons, not out of a prompt.</p>
+        </div>
+        <p class="stage-artifact"><code>EVIDENCE_CONTRADICTION · HIGH</code></p>
+      </li>
+      <li class="stage-row" data-layer="python">
+        <span class="stage-index">06</span>
+        <div class="stage-main">
+          <h3>Resolution</h3>
+          <p>A pure, total policy decides what a human utterance actually authorized. A named target
+            decides it; a bare reply needs exactly one open action and has to be timely. It refuses rather
+            than guesses.</p>
+        </div>
+        <p class="stage-artifact"><code>RESOLVED | AMBIGUOUS | UNRELATED</code></p>
+      </li>
+      <li class="stage-row" data-layer="python">
+        <span class="stage-index">07</span>
+        <div class="stage-main">
+          <h3>Intervention governor</h3>
+          <p>One spoken intervention per 45 seconds on a monotonic clock, chosen by utility rather than
+            arrival order, and packed exactly into a 512-byte speech budget.</p>
+        </div>
+        <p class="stage-artifact"><code>window closed · 31s remaining</code></p>
+      </li>
+      <li class="stage-row" data-layer="human">
+        <span class="stage-index">08</span>
+        <div class="stage-main">
+          <h3>Human decision</h3>
+          <p>The terminal stage, and the only one that can authorize anything. Who decided it is recorded
+            against the action; that attribution is the audit trail the product exists to produce.</p>
+        </div>
+        <p class="stage-artifact"><code>confirmed · by uid 1002</code></p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ══ BELIEF RETRACTION (LIGHT SECTION: WARM IVORY) ═══════════════════════ -->
+
+<section class="section section-light" id="retraction" aria-labelledby="retraction-title">
+  <div class="section-container">
+    <p class="section-kicker">Belief retraction</p>
+    <h2 id="retraction-title">Most systems append. This one can revise what a belief already caused.</h2>
+    <p class="lede">Every proposed action records the hypothesis that justified it. When reality
+      invalidates that theory, the pipeline walks the edge backwards and re-evaluates the unresolved
+      actions still resting on it — because an action carrying a verdict computed against a belief nobody
+      holds any more is the quiet failure this whole product is about.</p>
+
+    <div class="demo" id="l-retract" data-phase="0">
+      <div class="demo-bar">
+        <button class="btn btn-primary btn-sm" id="l-retract-run" type="button">Introduce contradicting evidence</button>
+        <button class="btn btn-secondary btn-sm" id="l-retract-reset" type="button" disabled>Reset</button>
+        <p class="demo-status" id="l-retract-status" role="status" aria-live="polite">Two actions rest on one theory.</p>
+      </div>
+
+      <div class="retract-stage">
+        <div class="retract-col">
+          <p class="retract-label">theory</p>
+          <div class="belief" id="l-retract-belief">
+            <p class="belief-text">It is the pool — core-db</p>
+            <p class="belief-meta"><span class="pill pill-active" id="l-retract-pill">active</span><span>pool_utilization</span><span>uid 1001</span></p>
+          </div>
+          <div class="evidence-drop" id="l-retract-evidence">
+            <p class="evidence-head">telemetry reading</p>
+            <p class="evidence-value">pool_utilization <b>91%</b></p>
+            <p class="evidence-note">claimed 40% · measured 91%</p>
+          </div>
+        </div>
+
+        <div class="retract-edges" id="l-retract-edges" aria-hidden="true">
+          <span class="redge"><i></i><b id="l-retract-edge-label">justifies</b></span>
+        </div>
+
+        <div class="retract-col retract-col-wide">
+          <p class="retract-label">unresolved actions resting on it</p>
+          <ul class="dep-list">
+            <li class="dep" data-dep="1">
+              <p class="dep-text">rollback · core-db → schema v2.3</p>
+              <p class="dep-meta">
+                <span class="pill pill-pending">pending</span>
+                <span class="pill dep-verdict">MEDIUM</span>
+                <span class="dep-note"></span>
+              </p>
+            </li>
+            <li class="dep" data-dep="2">
+              <p class="dep-text">restart · connection-pool</p>
+              <p class="dep-meta">
+                <span class="pill pill-pending">pending</span>
+                <span class="pill dep-verdict">LOW</span>
+                <span class="dep-note"></span>
+              </p>
+            </li>
+          </ul>
+          <p class="lookup" id="l-retract-lookup"><code>pending_actions_justified_by(hypothesis#a1)</code> → 2 actions · partial index</p>
+        </div>
+      </div>
+
+      <p class="demo-note">
+        It only ever escalates, and it cannot cascade: re-evaluating an action yields a verdict, never a
+        hypothesis change. Capped at 8 re-evaluations per turn. Note that both actions stay
+        <strong>pending</strong> — a retraction raises a warning, it never authorizes or cancels anything.
+      </p>
+      <p class="demo-provenance">Explanatory visualization. The real traversal runs in the pipeline
+        against a partial index in SQLite; nothing on this page is talking to it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ AMBIGUITY (INVERSE SECTION 3: DEEP DESIGNED NAVY) ═══════════════════ -->
+
+<section class="section section-navy" id="ambiguity" aria-labelledby="ambiguity-title">
+  <div class="section-bg-pattern" aria-hidden="true"></div>
+  <div class="section-container">
+    <p class="section-kicker">Ambiguity</p>
+    <h2 id="ambiguity-title">“Yeah” is not an authorization.</h2>
+    <p class="lede">Confirmation attribution is a pure, total policy rather than a heuristic. A named
+      target decides it. A bare reply needs exactly one open action <em>and</em> has to be timely, measured
+      from the last moment that action was live in the room. Everything else is refused — and a
+      non-resolved decision structurally cannot carry an action, because the dataclass raises.</p>
+
+    <div class="demo" id="l-amb">
+      <div class="demo-bar" role="group" aria-label="Room state">
+        <button class="seg" type="button" data-amb="two" aria-pressed="true">Two actions open</button>
+        <button class="seg" type="button" data-amb="one" aria-pressed="false">One action open</button>
+        <button class="seg" type="button" data-amb="stale" aria-pressed="false">One action, gone cold</button>
+      </div>
+
+      <div class="amb-stage">
+        <div class="amb-room">
+          <p class="retract-label">open actions</p>
+          <ul class="dep-list" id="l-amb-open"></ul>
+
+          <div class="amb-say">
+            <p class="amb-line"><span class="amb-uid">uid 1001</span>“Yeah, go ahead.”</p>
+          </div>
+        </div>
+
+        <div class="amb-policy">
+          <p class="retract-label">resolution policy</p>
+          <ul class="trace" id="l-amb-trace"></ul>
+          <div class="amb-verdict" id="l-amb-verdict">
+            <code id="l-amb-decision">AMBIGUOUS</code>
+            <span id="l-amb-count">0 actions authorized</span>
+          </div>
+          <p class="amb-reply" id="l-amb-reply"></p>
+        </div>
+      </div>
+
+      <p class="demo-note">The heuristic this replaced returned the most recent pending action and logged
+        a warning. That is a system that will eventually authorize the wrong destructive operation and be
+        able to explain, afterwards, exactly why it thought that was reasonable.</p>
+      <p class="demo-provenance">Explanatory visualization of the policy in the resolution module.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ INTERVENTION GOVERNOR (LIGHT SECTION: WARM IVORY) ═══════════════════ -->
+
+<section class="section section-light" id="governor" aria-labelledby="governor-title">
+  <div class="section-container">
+    <p class="section-kicker">The intervention governor</p>
+    <h2 id="governor-title">One channel. Forty-five seconds. Whatever matters most right now.</h2>
+    <p class="lede">Interrupting a human being out loud is the scarcest resource in the system, so it is
+      scheduled rather than queued. Utility is tier plus independent findings, decayed on a 90-second
+      half-life; the window takes the maximum. The scan is linear on purpose — utility is time-varying,
+      which breaks the stable-key assumption a heap depends on.</p>
+
+    <div class="demo" id="l-gov">
+      <div class="demo-bar">
+        <label class="gov-clock-label" for="l-gov-clock">Time since each candidate was raised</label>
+        <input class="scrub gov-clock" id="l-gov-clock" type="range" min="0" max="120" value="0" step="1" />
+        <span class="gov-elapsed" id="l-gov-elapsed">+0s</span>
+      </div>
+
+      <ul class="gov-list" id="l-gov-list"></ul>
+
+      <div class="gov-picks">
+        <div class="gov-pick" data-kind="fifo">
+          <p class="retract-label">a FIFO queue would say</p>
+          <p class="gov-pick-name" id="l-gov-fifo">—</p>
+          <p class="gov-pick-why">first raised, regardless of what it is about</p>
+        </div>
+        <div class="gov-pick" data-kind="governor">
+          <p class="retract-label">the governor says</p>
+          <p class="gov-pick-name" id="l-gov-picked">—</p>
+          <p class="gov-pick-why" id="l-gov-why">highest utility in the open window</p>
+        </div>
+      </div>
+
+      <div class="gov-budget">
+        <div class="gov-budget-head">
+          <p class="retract-label">and then it has to fit</p>
+          <p class="gov-bytes"><b id="l-gov-bytes">0</b><span>/ 512 bytes</span></p>
+        </div>
+        <div class="gov-bar" id="l-gov-bar"></div>
+        <ul class="gov-pack" id="l-gov-pack"></ul>
+        <p class="demo-note">Exact 0/1 knapsack over the <em>rendered</em> cost of each sentence. The lead
+          finding is mandatory; the rest compete for what is left. Greedy takes the first equal-tier
+          finding and can then afford nothing.</p>
+      </div>
+
+      <p class="demo-provenance">Explanatory visualization. The scheduler, the decay and the knapsack run
+        server-side in the governor.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ LIVE INCIDENT COMMAND ══════════════════════════════════════════════
+     The stage below films the real operator console. The markup inside .film
+     is the same markup, with the same classes, as index.html — so it inherits
+     styles.css and cannot drift from the console the backend serves at
+     /command. Only the ids differ (f- prefix) so the two can coexist.
+─────────────────────────────────────────────────────────────────────────── -->
+
+<section class="section section-light section-flush" id="console" aria-labelledby="console-title">
+  <div class="section-container">
+    <p class="section-kicker">Live incident command</p>
+    <h2 id="console-title">Enough theory. This is the console.</h2>
+    <p class="lede">Not a screenshot and not a mockup — the markup below is the operator console's own
+      markup, with the same classes from the same stylesheet, replaying the rehearsed golden demo that
+      ships in the repository. When a backend is serving this page it reads live topology, telemetry,
+      health and performance figures from the API rather than the shipped copies.</p>
+    <div class="cta cta-inline">
+      <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</section>
+
+<section class="stage" id="stage" aria-label="AEGIS incident walkthrough">
+
+  <div class="film" id="film" aria-hidden="true">
+    <div class="shell">
+
+      <header class="topbar">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div class="brand-text">
+            <h1>AEGIS</h1>
+            <p>Incident Commander</p>
+          </div>
+        </div>
+        <div class="status-cluster">
+          <div class="status-chip" id="f-listening" data-state="idle">
+            <span class="pulse" aria-hidden="true"></span>
+            <span class="status-label">Listening</span>
+          </div>
+          <div class="status-chip" id="f-window" data-state="open">
+            <span class="chip-key">Window</span>
+            <span class="chip-value" id="f-window-value">open</span>
+          </div>
+          <div class="status-chip">
+            <span class="chip-key">Extractor</span>
+            <span class="chip-value" id="f-provider">deterministic</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+
+        <section class="panel panel-conversation">
+          <div class="panel-head">
+            <h2>Conversation</h2>
+            <span class="count" id="f-turn-count">0 turns</span>
+          </div>
+          <div class="stream" id="f-conversation"></div>
+          <div class="composer">
+            <input type="text" placeholder="Type a note into the incident…" tabindex="-1" disabled />
+            <span class="btn btn-primary">Send</span>
+          </div>
+        </section>
+
+        <section class="panel panel-state">
+          <div class="panel-head">
+            <h2>Incident state</h2>
+            <span class="btn btn-ghost btn-sm">Refresh</span>
+          </div>
+          <div class="state-scroll">
+            <div class="state-group">
+              <div class="group-head"><h3>Theories</h3><span class="count" id="f-hypotheses-count">0</span></div>
+              <ul class="items" id="f-hypotheses"></ul>
+              <p class="group-empty" id="f-hypotheses-empty">No theories on record.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Facts</h3><span class="count" id="f-facts-count">0</span></div>
+              <ul class="items" id="f-facts"></ul>
+              <p class="group-empty" id="f-facts-empty">Nothing established yet.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Decision ledger</h3><span class="count" id="f-decisions-count">0</span></div>
+              <ul class="items" id="f-decisions"></ul>
+              <p class="group-empty" id="f-decisions-empty">Nothing decided yet.</p>
+            </div>
+            <div class="state-group">
+              <div class="group-head"><h3>Proposed actions</h3><span class="count" id="f-actions-count">0</span></div>
+              <ul class="items" id="f-actions"></ul>
+              <p class="group-empty" id="f-actions-empty">Nothing proposed yet.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel-interventions">
+          <div class="panel-head">
+            <h2>Interventions</h2>
+            <span class="count" id="f-interventions-count">0</span>
+          </div>
+          <div class="stream" id="f-interventions"></div>
+        </section>
+
+        <section class="panel panel-evidence">
+          <div class="panel-head">
+            <h2>Evidence</h2>
+            <span class="count" id="f-evidence-count">4</span>
+          </div>
+          <ul class="metrics" id="f-metrics"></ul>
+          <div class="submit-evidence"><span class="summary-static">＋ Submit a reading</span></div>
+        </section>
+
+      </main>
+
+      <footer class="footer">
+        <span class="conn" data-state="live">live</span>
+        <span class="sep">·</span>
+        <span>AEGIS never executes, blocks or overrides an action. Every consequential step needs an explicit human decision.</span>
+      </footer>
+
+    </div>
+  </div>
+
+  <!-- ── analysis surfaces: screen space, above the filmed console ──── -->
+
+  <div class="surface surface-contradiction" id="s-contradiction" data-accent="high" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Evidence contradiction</h3>
+      <span class="rule"></span><span class="tag">risk_engine · check 4</span>
+    </div>
+    <div class="gauge">
+      <div class="gauge-head"><span>claimed · uid 1002 · voice</span><b id="s-claimed">40%</b></div>
+      <div class="gauge-track"><div class="gauge-fill" id="s-claimed-fill" style="background:var(--medium)"></div></div>
+    </div>
+    <div class="gauge">
+      <div class="gauge-head"><span>measured · mock_telemetry · pool_utilization</span><b id="s-measured">91%</b></div>
+      <div class="gauge-track"><div class="gauge-fill" id="s-measured-fill" style="background:var(--high)"></div></div>
+    </div>
+    <p class="surface-note" id="s-contradiction-note">
+      <code>EVIDENCE_CONTRADICTION · HIGH</code><br />
+      The model produced a typed claim. Python compared it to the reading and set the tier.
+    </p>
+  </div>
+
+  <div class="surface surface-blast" id="s-blast" data-accent="high" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Blast radius · rollback core-db → v2.3</h3>
+      <span class="rule"></span><span class="tag">propagate_failure() · O(V+E)</span>
+    </div>
+    <div class="blast-canvas" id="s-blast-canvas">
+      <svg id="s-blast-edges" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="blast-counts" id="s-blast-counts">
+        <div><b id="s-count-direct" style="color:var(--high)">0</b><span>direct break</span></div>
+        <div><b id="s-count-cascade" style="color:var(--medium)">0</b><span>cascade</span></div>
+        <div><b id="s-count-total">0</b><span>total affected</span></div>
+        <div><b id="s-count-entry" style="color:var(--medium)">0</b><span>user-facing</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="surface surface-retraction" id="s-retraction" data-accent="medium" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Belief retraction</h3>
+      <span class="rule"></span><span class="tag">pending_actions_justified_by · reverse lookup</span>
+    </div>
+    <div class="chain">
+      <div class="chain-box" id="s-chain-hypothesis"><h4>hypothesis</h4><p>It is the pool — core-db</p></div>
+      <div class="chain-edge" id="s-chain-edge"><i></i><b></b><span id="s-chain-label">justifies</span></div>
+      <div class="chain-box" id="s-chain-action"><h4>pending action</h4><p>rollback core-db → v2.3</p></div>
+    </div>
+    <div class="chain-verdict" id="s-chain-verdict">
+      <code>re-evaluated</code><code>risk_engine.evaluate()</code><code class="high">HIGH</code>
+      <p>A verdict computed against a belief nobody holds any more only ever escalates — it cannot cascade.</p>
+    </div>
+  </div>
+
+  <div class="surface surface-budget" id="s-budget" data-accent="medium" aria-hidden="true">
+    <div class="surface-head">
+      <span class="dot"></span><h3>Speech budget</h3>
+      <span class="rule"></span><span class="tag">Agora speak() · 512 bytes · 0/1 knapsack</span>
+    </div>
+    <div class="budget-total"><b id="s-budget-used">0</b><span>/ 512 bytes</span></div>
+    <div class="budget-bar" id="s-budget-bar"></div>
+    <div class="budget-rows" id="s-budget-rows"></div>
+  </div>
+
+  <div class="stage-vignette"></div>
+  <div class="stage-veil" id="stage-veil"></div>
+
+  <div class="lockup lockup-open" id="lockup-open" aria-hidden="true">
+    <div class="lockup-word">AEGIS</div>
+    <p>it stays quiet until it shouldn't</p>
+  </div>
+
+  <div class="lockup lockup-end" id="lockup-end" style="opacity:0">
+    <div class="lockup-word">AEGIS</div>
+    <p>enter the incident</p>
+    <a class="btn btn-primary btn-lg enter" href="/command" data-enter>Open the console</a>
+  </div>
+
+  <div class="caption-bed">
+    <p class="caption" id="caption"></p>
+  </div>
+
+</section>
+
+<div class="transport">
+  <button class="btn btn-sm" id="play" type="button" aria-label="Pause walkthrough">Pause</button>
+  <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" step="1"
+         aria-label="Scrub the walkthrough" />
+  <span class="clock" id="clock">0:00 / 1:13</span>
+  <span class="clock" id="source-note">rehearsed demo</span>
+</div>
+<div class="beat-rail" id="beat-rail" role="tablist" aria-label="Walkthrough beats"></div>
+
+<!-- ══ REAL TIME / VOICE (LIGHT SECTION: WARM IVORY) ══════════════════════ -->
+
+<section class="section section-light" id="realtime" aria-labelledby="realtime-title">
+  <div class="section-container">
+    <p class="section-kicker">Real time</p>
+    <h2 id="realtime-title">The transcript is the input.<br />Nothing downstream knows how it arrived.</h2>
+    <p class="lede">A spoken turn and a typed one become the same transcript event and take the identical
+      path through extraction, state and risk. That is why the whole product is testable without a
+      microphone — and why the typed side-channel in the console is a second producer of an existing
+      contract rather than a second pipeline.</p>
+
+    <ol class="flowstrip" aria-label="Real-time path">
+      <li><span>01</span> Conversation</li>
+      <li><span>02</span> Transcript</li>
+      <li><span>03</span> Claims</li>
+      <li><span>04</span> Risk</li>
+      <li><span>05</span> Decision</li>
+    </ol>
+
+    <div class="health" id="l-health">
+      <div class="health-row"><span>extraction provider</span><b id="l-health-provider">—</b></div>
+      <div class="health-row"><span>agora credentials</span><b id="l-health-agora">—</b></div>
+      <div class="health-row"><span>intervention window</span><b id="l-health-window">—</b></div>
+      <div class="health-row"><span>rate limit</span><b id="l-health-rate">—</b></div>
+      <p class="health-source" id="l-health-source" data-live="false">no backend answered — showing nothing rather than inventing it</p>
+    </div>
+
+    <div class="disclosure">
+      <h3>What has <em>not</em> been verified</h3>
+      <p>Live voice has never run end to end. Whether an interrupt priority actually cuts through a human
+        mid-sentence, whether manual turn detection keeps the agent quiet, and whether speaker identities
+        survive overlapping speech are all unobserved on a real channel. Our side of that contract — the
+        client, the 512-byte cap, the speech composition — is covered by 31 tests against a mock transport,
+        and the transcript relay that would feed it from a browser does not exist yet.</p>
+      <p class="disclosure-foot">Disclosed here rather than in a footnote, because a landing page that
+        quietly implies a capability is the same failure mode this system was built to catch.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ ARCHITECTURE (LIGHT SECTION: WARM IVORY) ═══════════════════════════ -->
+
+<section class="section section-light" id="architecture" aria-labelledby="architecture-title">
+  <div class="section-container">
+    <p class="section-kicker">Architecture</p>
+    <h2 id="architecture-title">One process. One SQLite file. One in-process queue.</h2>
+    <p class="lede">Deliberately a modular monolith. There is one incident, one room, and a requirement
+      that a verdict is produced between two sentences of human speech — a network hop makes that worse,
+      not more impressive. The interesting line in the diagram is not the boxes, it is where the state
+      lock starts and stops.</p>
+
+    <div class="arch" id="l-arch">
+      <div class="arch-flow">
+        <div class="arch-node" data-outside="true">
+          <h3>Extraction</h3>
+          <p>provider protocol · versioned prompt · validation</p>
+          <p class="arch-why">outside the lock — a multi-second model call</p>
+        </div>
+
+        <span class="arch-link" aria-hidden="true"><i></i></span>
+
+        <div class="arch-lock">
+          <p class="arch-lock-label">state lock</p>
+          <div class="arch-lock-inner">
+            <div class="arch-node"><h3>State store</h3><p>transactional SQLite repository</p></div>
+            <span class="arch-link arch-link-sm" aria-hidden="true"><i></i></span>
+            <div class="arch-node"><h3>Risk engine</h3><p>topology graph · the four checks</p></div>
+            <span class="arch-link arch-link-sm" aria-hidden="true"><i></i></span>
+            <div class="arch-node"><h3>Resolution</h3><p>confirmation attribution policy</p></div>
+            <span class="arch-link arch-link-sm" aria-hidden="true"><i></i></span>
+            <div class="arch-node"><h3>Governor</h3><p>rate limit · scheduling · composition</p></div>
+          </div>
+        </div>
+
+        <span class="arch-link" aria-hidden="true"><i></i></span>
+
+        <div class="arch-node" data-outside="true">
+          <h3>Delivery</h3>
+          <p>speech sink · collected into a per-thread outbox</p>
+          <p class="arch-why">outside the lock — an 8-second HTTP timeout</p>
+        </div>
+      </div>
+
+      <p class="arch-note">Both ends sit outside the lock because both are slow and neither transitions
+        state. There is a test whose only job is to grab the lock while a deliberately slow sink is
+        mid-call; if it ever fails, someone has put speaking back under the lock and one unreachable voice
+        service can freeze the entire incident.</p>
+    </div>
+
+    <h3 class="subhead">Direct dependents are not the blast radius.</h3>
+    <p class="lede">Naming only what reads the changed schema understates the damage. A multi-source
+      reverse BFS over the transposed dependency graph separates direct breakage from the cascade, and
+      calls out the entry points a failure reaches — because a failure that reaches one is a failure a
+      user sees. Click a service to walk it.</p>
+    <div class="topo">
+      <div class="topo-viewport" id="topo-viewport">
+        <canvas id="topo-canvas"></canvas>
+        <p class="topo-hint">drag to rotate · click a node</p>
+        <div class="topo-fallback">
+          <span>Canvas is unavailable in this browser. The dependency paths are listed on the right.</span>
+        </div>
+      </div>
+      <div class="topo-readout">
+        <div class="panel">
+          <div class="panel-head">
+            <h2 id="topo-selected">core-db</h2>
+            <span class="count" id="topo-summary">—</span>
+          </div>
+          <ul class="topo-paths" id="topo-paths"></ul>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="subhead">Every performance claim is checkable from a running server.</h3>
+    <p class="lede">These numbers are reported by the process that is serving this page. The working-set
+      read is flat because it asks for what the checks actually read — the justifying hypothesis and the
+      decisions about this target — rather than the whole incident.</p>
+    <div class="stat-row" id="perf-stats">
+      <div><b id="perf-turn">0.43 ms</b><span>whole turn · p50</span></div>
+      <div><b id="perf-risk">0.16 ms</b><span>risk evaluation · p50</span></div>
+      <div><b id="perf-read">0.25 ms</b><span>working-set read · p50</span></div>
+      <div><b id="perf-nodes">10</b><span>topology nodes</span></div>
+      <div><b id="perf-tests">370</b><span>tests</span></div>
+    </div>
+    <p class="perf-source" id="perf-source" data-live="false">shipped benchmark — this process has not run a turn yet</p>
+  </div>
+</section>
+
+<!-- ══ SAFETY PHILOSOPHY (LIGHT SECTION: WARM IVORY) ══════════════════════ -->
+
+<section class="section section-light section-creed" id="safety" aria-labelledby="safety-title">
+  <div class="section-container">
+    <p class="section-kicker">Safety philosophy</p>
+    <h2 id="safety-title" class="creed">
+      <span>AI interpretation <em class="creed-neq">≠</em> deterministic authorization</span>
+      <span>deterministic authorization <em class="creed-neq">≠</em> human authorization</span>
+      <span>human authorization <em class="creed-neq">≠</em> <b class="creed-highlight">execution</b></span>
+    </h2>
+    <p class="lede">AEGIS holds all four apart on purpose. It reasons at the first boundary, computes at
+      the second, waits at the third, and does not exist at the fourth. Everything below is a red line in
+      the specification, and several have a test whose only job is to fail if someone simplifies them.</p>
+
+    <ul class="creed-rules">
+      <li><span class="rule-num">01</span><b>No execution surface.</b> The entire outbound vocabulary is join a call, say this, leave.
+        There is no code path to act on the systems being discussed.</li>
+      <li><span class="rule-num">02</span><b>No implicit authorization.</b> Silence, ambiguity and timeouts leave an action pending
+        forever. There is deliberately no timeout path into resolution.</li>
+      <li><span class="rule-num">03</span><b>The model never decides risk.</b> Its response schema has no field in which it could, and the
+        risk engine imports no provider.</li>
+      <li><span class="rule-num">04</span><b>At most one spoken intervention per 45 seconds</b>, on a monotonic clock — with no exception
+        for a genuine double-HIGH event.</li>
+      <li><span class="rule-num">05</span><b>Speech is capped at 512 bytes</b>, enforced before the request rather than trusted to the
+        other end.</li>
+      <li><span class="rule-num">06</span><b>No hypothesis is voiced as fact.</b> Sentences are built from typed findings, never by
+        interpolating claim text into an assertive template.</li>
+      <li><span class="rule-num">07</span><b>Secrets never reach the frontend, a log, or version control.</b> Error contexts carry status
+        codes, never response bodies — a body can echo the request, and the request carries the header.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══ FINAL CTA (INVERSE SECTION 4: COMPACT HORIZONTAL CARD ON DEEP DESIGNED NAVY) ══ -->
+
+<section class="section section-closer-wrap" id="closer-section">
+  <div class="section-container">
+    <div class="closer-card section-navy" id="closer">
+      <div class="section-bg-pattern" aria-hidden="true"></div>
+      <div class="closer-content">
+        <div class="closer-badge">
+          <span class="badge-dot"></span>
+          <span>INCIDENT OPERATIONS</span>
+        </div>
+        <h2 id="closer-title">Ready to enter the incident?</h2>
+        <p class="closer-lede">The console is the operational application. It reads authoritative state from the API,
+          takes typed turns through the same pipeline a spoken one would, and records who authorized what.</p>
+        <div class="closer-cta">
+          <a class="btn btn-primary btn-lg" href="/command" data-enter>Enter Incident Command <span aria-hidden="true">→</span></a>
+          <a class="btn btn-secondary btn-lg" href="/api/state">Inspect raw state</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ══ FOOTER (COMPREHENSIVE EDITORIAL FOOTER) ════════════════════════════ -->
+
+<footer class="page-foot">
+  <div class="footer-container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="brand-row">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L3 7V12C3 17.5 7 21.5 12 23C17 21.5 21 17.5 21 12V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="12" cy="12" r="3" fill="#E8A33D"/>
+            </svg>
+          </span>
+          <span class="footer-word">AEGIS</span>
+          <span class="footer-edition">Hackathon Edition</span>
+        </div>
+        <p class="footer-tagline">
+          Voice-native incident commander · AI participant that intervenes to prevent catastrophic human mistakes under pressure.
+        </p>
+      </div>
+
+      <div class="footer-nav-col">
+        <span class="footer-col-title">Navigation</span>
+        <ul class="footer-links">
+          <li><a href="#top">Hero</a></li>
+          <li><a href="#overview">Overview & The Problem</a></li>
+          <li><a href="#thinking">How it thinks</a></li>
+          <li><a href="#retraction">Belief Retraction</a></li>
+          <li><a href="#ambiguity">Ambiguity Resolution</a></li>
+          <li><a href="#governor">Intervention Governor</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-nav-col">
+        <span class="footer-col-title">System</span>
+        <ul class="footer-links">
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#safety">Safety Philosophy</a></li>
+          <li><a href="/command" data-enter>Command Console</a></li>
+          <li><a href="/api/telemetry">Live Telemetry API</a></li>
+          <li><a href="/api/topology">Live Topology API</a></li>
+          <li><a href="/api/state">Raw State API</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-divider"></div>
+
+    <div class="footer-footnote">
+      <p class="footnote" id="footnote">
+        Telemetry is four fixed mocked metrics and the topology is a ten-node fixture — scope decisions,
+        disclosed rather than hidden. The walkthrough replays the rehearsed golden demo shipped in
+        <code>data/transcripts/golden_demo.json</code>; when this page is served by a running backend it
+        reads live topology, telemetry, health and performance figures from the API instead of the shipped
+        copies. The belief-retraction, ambiguity and governor panels are explanatory visualizations and say
+        so where they appear.
+      </p>
+    </div>
+
+    <div class="footer-bottom">
+      <span class="footer-axiom">AI interpretation ≠ deterministic authorization ≠ human authorization ≠ execution</span>
+      <span class="footer-copy">AEGIS · EchoSphere Hackathon · Built with Python & Agora Conversational AI</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/static/topology3d.js"></script>
+<script src="/static/hero.js"></script>
+<script src="/static/landing.js"></script>
+</body>
+</html>

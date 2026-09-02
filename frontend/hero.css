@@ -470,9 +470,8 @@ body.landing {
 /* ── page sections ────────────────────────────────────────────────────── */
 
 .section {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 96px 24px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .section + .section { border-top: 1px solid var(--border); }
 

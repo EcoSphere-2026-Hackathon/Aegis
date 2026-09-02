@@ -284,17 +284,32 @@ body.landing {
 .btn-lg { padding: 11px 22px; font-size: 14px; }
 .btn:active { transform: translateY(1px); }
 
-/* ── BASE SECTION STRUCTURE (SCREEN-FITTING) ──────────────────────────── */
+/* ── BASE SECTION STRUCTURE (FULL-BLEED SCREEN-FITTING) ────────────────── */
+
+.section, .hero, .section-closer, .page-foot {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-sizing: border-box;
+}
 
 .section {
-  width: 100%;
   min-height: calc(100vh - var(--nav-h));
   display: flex;
   flex-direction: column;
   justify-content: center;
   padding: var(--section-pad-y) 0;
   position: relative;
-  box-sizing: border-box;
+  scroll-snap-align: start;
+}
+
+.hero {
+  min-height: calc(100vh - var(--nav-h));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--section-pad-y) 0;
   scroll-snap-align: start;
 }
 
@@ -1630,20 +1645,16 @@ body.landing {
 
 /* ── 4. FINAL CTA: COMPACT HORIZONTAL CARD ON DEEP DESIGNED NAVY ──────── */
 
-.section-closer-wrap {
-  min-height: auto;
-  padding: clamp(36px, 6vh, 64px) 0;
-  background: var(--bg-light);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+/* ── 4. FINAL CTA: FULL-BLEED DEEP DESIGNED NAVY ──────────────────────── */
 
-.closer-card {
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-navy);
-  box-shadow: var(--shadow-navy);
-  padding: clamp(28px, 4vw, 44px) clamp(24px, 4vw, 48px);
+.section-closer {
+  min-height: auto;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: clamp(48px, 8vh, 72px) 0;
+  border-top: 1px solid var(--border-navy);
+  border-bottom: 1px solid var(--border-navy);
   position: relative;
   overflow: hidden;
   text-align: center;
@@ -1652,7 +1663,7 @@ body.landing {
 .closer-content {
   position: relative;
   z-index: 2;
-  max-width: 680px;
+  max-width: 740px;
   margin: 0 auto;
 }
 
@@ -1664,7 +1675,7 @@ body.landing {
   border-radius: 999px;
   background: rgba(232, 163, 61, 0.12);
   border: 1px solid rgba(232, 163, 61, 0.25);
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: .14em;
@@ -1678,21 +1689,21 @@ body.landing {
   background: var(--accent);
 }
 
-.closer-card h2 {
+.section-closer h2 {
   font-family: var(--display);
-  font-size: clamp(24px, 3vw, 36px);
+  font-size: clamp(26px, 3.2vw, 40px);
   font-weight: 550;
   color: var(--text-navy);
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   line-height: 1.15;
 }
 
 .closer-lede {
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 14.5px;
+  line-height: 1.55;
   color: var(--text-navy-muted);
-  margin: 0 auto 20px;
-  max-width: 58ch;
+  margin: 0 auto 24px;
+  max-width: 60ch;
 }
 
 .closer-cta {
@@ -1702,19 +1713,29 @@ body.landing {
   justify-content: center;
 }
 
-/* ── COMPREHENSIVE EDITORIAL FOOTER ───────────────────────────────────── */
+/* ── COMPREHENSIVE EDITORIAL FOOTER (DEEP DESIGNED NAVY) ──────────────── */
 
 .page-foot {
-  border-top: 1px solid var(--border);
-  background: #ECE7DC;
-  padding: 40px 0 24px;
-  color: var(--text-muted);
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  border-top: 1px solid var(--border-navy);
+  background:
+    radial-gradient(ellipse 90% 70% at 75% 20%, rgba(31, 53, 102, 0.55) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 20% 80%, rgba(232, 163, 61, 0.05) 0%, transparent 50%),
+    linear-gradient(145deg, var(--bg-navy-start) 0%, var(--bg-navy-end) 100%);
+  padding: 48px 0 28px;
+  color: var(--text-navy-muted);
+  position: relative;
+  overflow: hidden;
 }
 
 .footer-container {
   max-width: var(--page-max);
   margin: 0 auto;
   padding: 0 var(--section-pad-x);
+  position: relative;
+  z-index: 2;
 }
 
 .footer-top {
@@ -1737,14 +1758,14 @@ body.landing {
   width: 22px;
   height: 22px;
   border-radius: 5px;
-  background: #1B1B18;
-  color: #F6F3EC;
+  background: #F4F1E8;
+  color: #1B1B18;
 }
 .footer-word {
   font-family: var(--display);
   font-size: 17px;
   font-weight: 700;
-  color: var(--text);
+  color: var(--text-navy);
   letter-spacing: .06em;
 }
 .footer-edition {
@@ -1754,16 +1775,16 @@ body.landing {
   letter-spacing: .1em;
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-  color: var(--accent-terracotta);
+  background: rgba(232, 163, 61, 0.12);
+  border: 1px solid rgba(232, 163, 61, 0.3);
+  color: var(--accent);
   font-weight: 600;
 }
 .footer-tagline {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
-  color: var(--text-muted);
+  color: var(--text-navy-muted);
   max-width: 38ch;
 }
 
@@ -1774,7 +1795,7 @@ body.landing {
   font-weight: 600;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--text);
+  color: var(--text-navy);
   margin-bottom: 10px;
 }
 
@@ -1788,15 +1809,15 @@ body.landing {
 }
 .footer-links a {
   font-size: 12.5px;
-  color: var(--text-muted);
+  color: var(--text-navy-muted);
   text-decoration: none;
   transition: color 0.15s ease;
 }
-.footer-links a:hover { color: var(--accent-terracotta); }
+.footer-links a:hover { color: var(--accent); }
 
 .footer-divider {
   height: 1px;
-  background: var(--border-strong);
+  background: var(--border-navy);
   margin-bottom: 18px;
 }
 
@@ -1808,14 +1829,15 @@ body.landing {
   padding: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-faint);
+  color: var(--text-navy-faint);
 }
 .footnote code {
   font-family: var(--mono);
-  background: var(--bg-surface);
+  background: rgba(255, 255, 255, 0.06);
   padding: 1px 4px;
   border-radius: 3px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-navy);
+  color: var(--text-navy);
 }
 
 .footer-bottom {
@@ -1825,12 +1847,15 @@ body.landing {
   gap: 16px;
   flex-wrap: wrap;
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--text-navy-faint);
 }
 .footer-axiom {
   font-family: var(--mono);
-  color: var(--text-muted);
+  color: var(--text-navy-muted);
   letter-spacing: .02em;
+}
+.footer-copy {
+  color: var(--text-navy-faint);
 }
 
 @media (max-width: 860px) {

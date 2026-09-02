@@ -110,6 +110,54 @@ class VoiceSessionRouteTests(ApiTestCase):
         response = self.post("/api/voice/sessions", {"participant_uid": "1001"}, authed=False)
         self.assertEqual(response.status_code, 401)
 
+    def test_voice_session_start_and_renew_response_shape(self) -> None:
+        from unittest.mock import Mock
+        from datetime import datetime, timezone
+        from backend.agora.sessions import VoiceSession
+        from backend.agora.tokens import VoiceTokens
+
+        mock_manager = Mock()
+        mock_session = VoiceSession(
+            session_id="vs_123", incident_id="api-test", participant_uid="1001",
+            channel="ch_1", agent_id="agent_1", agent_uid="9000",
+            expires_at=datetime.now(timezone.utc)
+        )
+        mock_tokens = VoiceTokens(rtc_token="rtc123", rtm_token="rtm123", expires_at=datetime.now(timezone.utc))
+        mock_manager.start.return_value = (mock_session, mock_tokens, True)
+        mock_manager.renew.return_value = (mock_session, mock_tokens)
+        mock_manager.get.return_value = mock_session
+        mock_manager.stop.return_value = True
+
+        self.runtime.voice_sessions = mock_manager
+
+        # Test start
+        response = self.post("/api/voice/sessions", {"participant_uid": "1001"})
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["session_id"], "vs_123")
+        self.assertEqual(body["rtc_token"], "rtc123")
+        self.assertEqual(body["rtm_token"], "rtm123")
+        self.assertNotIn("customer_secret", str(body).lower())
+        self.assertNotIn("app_certificate", str(body).lower())
+
+        # Test renew
+        response = self.post("/api/voice/sessions/vs_123/renew", {"participant_uid": "1001"})
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["rtc_token"], "rtc123")
+
+        # Test get
+        response = self.client.get("/api/voice/sessions/vs_123?participant_uid=1001", headers=self.auth())
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["session_id"], "vs_123")
+        self.assertNotIn("rtc_token", body)
+
+        # Test stop
+        response = self.client.request("DELETE", "/api/voice/sessions/vs_123", json={"participant_uid": "1001"}, headers=self.auth())
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["stopped"])
+
     def test_telemetry_lists_exactly_the_four_fixed_metrics(self) -> None:
         metrics = self.client.get("/api/telemetry").json()["metrics"]
         self.assertEqual(

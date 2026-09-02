@@ -128,8 +128,8 @@ Live-test it on the chosen Agora project; if this project's RTM policy requires 
 
 ## 5. Remaining Implementation
 
-1. Handle RTC/RTM disconnect/reconnect and backend-restart recovery without creating duplicate agents or state mutations.
-2. Add API tests with a fake `VoiceSessionManager` for start/get/renew/stop response shape, including asserting App Certificate/Customer credentials never appear.
+1. **[COMPLETED]** Handle RTC/RTM disconnect/reconnect and backend-restart recovery without creating duplicate agents or state mutations.
+2. **[COMPLETED]** Add API tests with a fake `VoiceSessionManager` for start/get/renew/stop response shape, including asserting App Certificate/Customer credentials never appear.
 3. Run browser smoke tests with the server, then run a live Agora spike once credentials exist.
 
 ## 6. Actual Architecture
@@ -195,7 +195,7 @@ Not performed: credentials/configuration are missing.
 
 ## 11. Exact Next Step
 
-First add RTC/RTM connection-state handlers in `frontend/voice.js` that show a safe reconnecting/unavailable state without attempting to fabricate transcripts or create a second server agent; write unit tests around the state-transition helper.
+Provide valid Agora credentials in the `.env` file (e.g. `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_CUSTOMER_ID`, `AGORA_CUSTOMER_SECRET`), and then run browser smoke tests with the server. Validate live ConvoAI `/join`, RTC remote audio, RTM transcript delivery, and microphone publishing.
 
 ## 12. Instructions to Antigravity
 

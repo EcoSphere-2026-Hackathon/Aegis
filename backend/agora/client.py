@@ -106,7 +106,7 @@ class AgoraClient:
                 "channel": channel or self._config.channel_name,
                 "agent_rtc_uid": agent_uid or self._config.agent_uid,
                 "remote_rtc_uids": ["*"],
-                "enable_string_uid": False,
+                "enable_string_uid": True,
                 "idle_timeout": 600,
                 "advanced_features": {"enable_rtm": True},
                 "parameters": {

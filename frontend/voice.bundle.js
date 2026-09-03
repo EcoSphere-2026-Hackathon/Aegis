@@ -61583,18 +61583,46 @@
     })
   });
   function waitForAgent(rtc, agentUid) {
+    console.log(`[DIAGNOSTIC] waitForAgent started for expected agentUid: ${agentUid}.`);
+    console.log(`[DIAGNOSTIC] Current rtc.remoteUsers at start:`, rtc.remoteUsers.map((u2) => u2.uid));
+    const existingAgent = rtc.remoteUsers.find((u2) => String(u2.uid) === String(agentUid));
+    if (existingAgent) {
+      console.log(`[DIAGNOSTIC] Agent ${agentUid} is already in the channel.`);
+      return Promise.resolve();
+    }
+    console.log(`[DIAGNOSTIC] Agent not yet in channel. Setting 40s timeout.`);
     return new Promise((resolve, reject) => {
-      const timeout2 = setTimeout(() => {
-        rtc.off("user-joined", onUserJoined);
-        reject(new Error("The agent did not join the RTC channel in time."));
-      }, 2e4);
-      const onUserJoined = (user) => {
-        if (String(user.uid) !== String(agentUid)) return;
+      const cleanup = () => {
         clearTimeout(timeout2);
         rtc.off("user-joined", onUserJoined);
-        resolve();
+        rtc.off("user-published", onUserPublished);
+      };
+      const timeout2 = setTimeout(() => {
+        console.error(`[DIAGNOSTIC] TIMEOUT FIRED! agentUid ${agentUid} never matched.`);
+        console.error(`[DIAGNOSTIC] Current remote UIDs at timeout:`, rtc.remoteUsers.map((u2) => u2.uid));
+        cleanup();
+        reject(new Error("The agent did not join the RTC channel in time."));
+      }, 4e4);
+      const onUserJoined = (user) => {
+        console.log(`[DIAGNOSTIC] user-joined fired! user.uid: ${user.uid}`);
+        if (String(user.uid) === String(agentUid)) {
+          console.log(`[DIAGNOSTIC] MATCH (user-joined)! Clearing timeout for agentUid: ${agentUid}`);
+          cleanup();
+          resolve();
+        } else {
+          console.log(`[DIAGNOSTIC] IGNORING user-joined because ${String(user.uid)} !== ${String(agentUid)}`);
+        }
+      };
+      const onUserPublished = (user, mediaType) => {
+        console.log(`[DIAGNOSTIC] user-published fired! user.uid: ${user.uid}, mediaType: ${mediaType}`);
+        if (String(user.uid) === String(agentUid) && mediaType === "audio") {
+          console.log(`[DIAGNOSTIC] MATCH (user-published audio)! Clearing timeout for agentUid: ${agentUid}`);
+          cleanup();
+          resolve();
+        }
       };
       rtc.on("user-joined", onUserJoined);
+      rtc.on("user-published", onUserPublished);
     });
   }
   async function start() {
@@ -61625,6 +61653,14 @@
     try {
       await rtm.login({ token: session.rtm_token });
       await rtm.subscribe(session.channel);
+      rtm.on("message", (msg) => {
+        try {
+          const raw = JSON.parse(msg.message);
+          console.log(`[DIAGNOSTIC] RAW RTM MESSAGE:`, JSON.stringify(raw));
+        } catch (e2) {
+          console.log(`[DIAGNOSTIC] RAW RTM UNPARSABLE:`, msg.message);
+        }
+      });
       const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
       const transcriptToAegis = relayForSession(session.session_id);
       ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {

@@ -47,10 +47,12 @@ class VoiceSessionManager:
                 return existing, issue_voice_tokens(self._config, channel=existing.channel, uid=participant_uid), False
             channel = f"aegis-{incident_id}-{secrets.token_urlsafe(8)}"[:128]
             tokens = issue_voice_tokens(self._config, channel=channel, uid=participant_uid)
+            agent_tokens = issue_voice_tokens(self._config, channel=channel, uid=self._config.agent_uid)
             agent_id = self._client.join(
                 channel=channel,
                 agent_uid=self._config.agent_uid,
                 name=f"aegis-{secrets.token_hex(4)}",
+                token=agent_tokens.rtc_token,
             )
             session = VoiceSession(
                 session_id=f"vs_{secrets.token_urlsafe(12)}",

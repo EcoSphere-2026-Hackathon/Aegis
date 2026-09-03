@@ -42,6 +42,7 @@ a side effect.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -117,12 +118,18 @@ def select_action_to_resolve(
     *,
     window_seconds: float,
     last_raised_at: Optional[Mapping[str, datetime]] = None,
+    utterance: Optional[str] = None,
 ) -> ResolutionDecision:
     """Apply the policy. Never raises; never guesses.
 
     ``last_raised_at`` maps an action's claim id to the last time AEGIS spoke
     about it. Absent entries simply mean AEGIS never raised that action, in
     which case its proposal time is the reference moment.
+
+    ``utterance`` is the human's actual words. It is what ``target_ref`` is
+    checked against before the named-target path is allowed to run; see
+    :func:`_target_is_corroborated`. Defaults to the claim's own text, which
+    is the same string for every extractor in this repository.
     """
     if not pending:
         return ResolutionDecision(
@@ -132,7 +139,14 @@ def select_action_to_resolve(
 
     raised = last_raised_at or {}
 
-    if claim.target_ref:
+    # A target the human did not actually say is not a disambiguation, it is
+    # the extractor's guess -- and acting on it would let interpretation pick
+    # which action gets authorised. Fall through to the bare-reply rules,
+    # which require exactly one open action *and* timeliness, and refuse
+    # otherwise. See the module docstring's second rule.
+    if claim.target_ref and _target_is_corroborated(
+        claim.target_ref, utterance if utterance is not None else claim.text
+    ):
         return _resolve_named(pending, claim)
 
     if len(pending) > 1:
@@ -211,6 +225,61 @@ def _resolve_named(
             f"{len(candidates)} actions are open on {claim.target_ref} and the reply "
             f"does not say which"
         ),
+    )
+
+
+#: Tokens too short or too generic to be evidence that a human named a
+#: component. "db" and "api" appear inside half the topology; requiring a
+#: distinctive token keeps the check from passing on any sentence containing
+#: the word "service".
+_MIN_TOKEN = 3
+
+#: Splits a component name into the words a person might actually say.
+#: ``core-db`` -> {"core", "db"}; ``notification-service`` -> {"notification",
+#: "service"}.
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _target_is_corroborated(target_ref: str, utterance: str) -> bool:
+    """Did the human's own words refer to this component?
+
+    The single most dangerous thing an extractor can do to this system is
+    attach a ``target_ref`` to a bare "yeah". The vocabulary constraint in the
+    extraction service stops invented component names, but it cannot stop a
+    *real* one being attached to an utterance that never mentioned it -- and
+    the model is handed the list of pending targets as context, which is
+    exactly the set that would cause an authorisation if guessed.
+
+    Without this check the named-target path fires on that guess and
+    authorises a specific action, skipping both the "exactly one open action"
+    rule and the timeliness rule. That is interpretation becoming
+    authorisation, which is the one boundary this system exists to hold.
+
+    So the reply only counts as *naming* a target when the utterance carries
+    lexical evidence of it: the full name (however it is punctuated), or one
+    of its distinctive words. This is deliberately generous -- it is a guard
+    against fabrication, not a disambiguator -- because the cost of being
+    wrong is asymmetric. A false negative falls through to the bare-reply
+    rules, which still resolve a single timely action. A false positive
+    authorises the wrong destructive operation.
+    """
+    if not target_ref:
+        return False
+
+    spoken = utterance.lower()
+    # Punctuation-insensitive: "core-db", "core db" and "coredb" are the same
+    # component said three ways, and none of them should be a miss.
+    flattened = _TOKEN_SPLIT.sub("", spoken)
+    target = target_ref.lower()
+
+    if target in spoken or _TOKEN_SPLIT.sub("", target) in flattened:
+        return True
+
+    words = {word for word in _TOKEN_SPLIT.split(spoken) if word}
+    return any(
+        token in words
+        for token in _TOKEN_SPLIT.split(target)
+        if len(token) >= _MIN_TOKEN
     )
 
 

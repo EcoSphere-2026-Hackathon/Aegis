@@ -209,6 +209,70 @@ class FailureHandlingTests(unittest.TestCase):
         self.assertIn("kaboom", outcome.failure_reason or "")
 
 
+class LocalFallbackTests(unittest.TestCase):
+    """A dead hosted model must not cost the utterance.
+
+    Without a fallback the loop survives a provider outage but survives
+    *blind*: the turn produces a ``none`` claim and whatever was said in it is
+    gone. If that turn was the one proposing a rollback, AEGIS had nothing to
+    reason about at the moment it mattered most. A complete offline extractor
+    already ships in this repository, so going blind was a wiring gap rather
+    than a constraint.
+    """
+
+    def _service(self, provider, **kwargs) -> ExtractionService:
+        return service_with(provider, fallback_provider=DeterministicProvider(), **kwargs)
+
+    def test_a_dead_provider_falls_back_to_local_extraction(self) -> None:
+        provider = ScriptedProvider("{}", fail_times=99)
+        outcome = self._service(provider, max_attempts=2).extract(
+            transcript("Let's rollback core-db to the last version.")
+        )
+        self.assertFalse(outcome.degraded, "the turn was dropped despite a working fallback")
+        self.assertIn("fallback", outcome.provider)
+        self.assertIn(
+            ClaimType.PROPOSED_ACTION,
+            [claim.type for claim in outcome.claims],
+            "the rollback proposal was lost while the provider was down",
+        )
+        # The outage is still on the record.
+        self.assertIsNotNone(outcome.failure_reason)
+
+    def test_malformed_output_also_falls_back(self) -> None:
+        # The call succeeded and the content was garbage, which the retry loop
+        # does not cover -- so this is the only thing between a hallucinating
+        # model and a lost utterance.
+        provider = ScriptedProvider("not json at all")
+        outcome = self._service(provider, max_attempts=1).extract(
+            transcript("Let's rollback core-db to the last version.")
+        )
+        self.assertFalse(outcome.degraded)
+        self.assertIn("fallback", outcome.provider)
+
+    def test_without_a_fallback_the_behaviour_is_unchanged(self) -> None:
+        provider = ScriptedProvider("{}", fail_times=99)
+        outcome = service_with(provider, max_attempts=2).extract(transcript("x"))
+        self.assertTrue(outcome.degraded)
+        self.assertIs(outcome.claims[0].type, ClaimType.NONE)
+
+    def test_a_fallback_that_finds_nothing_reports_the_outage_honestly(self) -> None:
+        # Filler carries no claim. Reporting that as a successful extraction
+        # would hide a provider outage behind an empty result, so the outcome
+        # has to stay degraded when the fallback recovered nothing.
+        provider = ScriptedProvider("{}", fail_times=99)
+        outcome = self._service(provider, max_attempts=1).extract(transcript("so anyway"))
+        self.assertTrue(outcome.degraded)
+
+    def test_the_fallback_is_never_cached(self) -> None:
+        # The cache holds what the *configured* provider said. Seeding it from
+        # the fallback would serve degraded extractions after the outage ends.
+        provider = ScriptedProvider("{}", fail_times=99)
+        service = self._service(provider, max_attempts=1)
+        text = "Let's rollback core-db to the last version."
+        service.extract(transcript(text, turn="turn-a"))
+        self.assertEqual(service.cache_size, 0)
+
+
 class ContextTests(unittest.TestCase):
     def test_recent_turns_accumulate_and_are_bounded(self) -> None:
         provider = ScriptedProvider('{"claims":[{"type":"none","text":""}]}')

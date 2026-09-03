@@ -33,6 +33,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts import use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+
 from backend.agora.client import AgoraClient  # noqa: E402
 from backend.common.config import load_config  # noqa: E402
 from backend.common.errors import AegisError  # noqa: E402
@@ -122,6 +126,12 @@ def check_config() -> int:
         ("AGORA_CHANNEL_NAME", agora.channel_name, bool(agora.channel_name)),
         ("AGORA_CUSTOMER_ID", "set" if agora.customer_id.reveal() else "", bool(agora.customer_id.reveal())),
         ("AGORA_CUSTOMER_SECRET", "set" if agora.customer_secret.reveal() else "", bool(agora.customer_secret.reveal())),
+        # The browser never receives the certificate -- it receives short-lived
+        # tokens minted from it. Without it no participant can join a channel,
+        # so a preflight that omits it passes on a configuration that cannot
+        # actually carry a voice demo.
+        ("AGORA_APP_CERTIFICATE", "set" if agora.app_certificate.reveal() else "",
+         bool(agora.app_certificate.reveal())),
         ("AGORA_BASE_URL", agora.base_url, bool(agora.base_url)),
         ("agent uid", agora.agent_uid, bool(agora.agent_uid)),
         ("request timeout", f"{agora.request_timeout_seconds}s", True),
@@ -145,6 +155,18 @@ def check_config() -> int:
         )
         print(f"  {DIM}These are not the App ID and App Certificate; those sign RTC "
               f"tokens and will fail here with a 401.{RESET}")
+        return 1
+
+    if not agora.can_issue_client_tokens:
+        # REST auth is only half the story now: the browser joins the channel
+        # with a token minted from the App Certificate, so voice cannot start
+        # without it even though every REST call would succeed.
+        print(
+            f"\n  {RED}Cannot issue browser tokens.{RESET} Set AGORA_APP_ID and "
+            f"AGORA_APP_CERTIFICATE from Console → Project."
+        )
+        print(f"  {DIM}REST calls would work, but no participant could join the "
+              f"voice channel.{RESET}")
         return 1
 
     print(f"\n  {GREEN}Configuration is complete.{RESET} "

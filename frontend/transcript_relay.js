@@ -20,7 +20,27 @@ function timestampToIso(value) {
   return null;
 }
 
-export function normalizeFinalHumanTurn(item, participantUid) {
+/* Agora numbers turns with a small per-agent-session counter -- the first
+ * turn of a session is 1. AEGIS claims turn ids in a single namespace per
+ * incident and treats a repeat as a duplicate to be dropped, so a bare
+ * counter is not safe to use as the key:
+ *
+ *   - two participants on one incident each run their own agent, so both
+ *     counters walk through the same small integers;
+ *   - a rejoin starts a new agent, and the counter restarts.
+ *
+ * Either way the second utterance is silently discarded -- and the one that
+ * disappears may be the one proposing a destructive action. The session id
+ * is minted per voice session by the API, so scoping the counter to it makes
+ * the key unique across participants and across rejoins while staying
+ * *stable* for the same logical turn, which is what keeps a genuine
+ * redelivery deduplicating correctly.
+ */
+export function scopedTurnId(sessionId, turnId) {
+  return sessionId ? `${sessionId}:${turnId}` : String(turnId);
+}
+
+export function normalizeFinalHumanTurn(item, participantUid, sessionId) {
   if (!item || !participantUid) return null;
 
   // The toolkit hardcodes `status = 1` (END) for all user transcripts, even interim ones.
@@ -40,7 +60,7 @@ export function normalizeFinalHumanTurn(item, participantUid) {
   if (!turnId || !text || !timestamp) return null;
   return {
     uid: String(participantUid),
-    turn_id: turnId,
+    turn_id: scopedTurnId(sessionId, turnId),
     role: "human",
     text,
     final: true,
@@ -48,12 +68,12 @@ export function normalizeFinalHumanTurn(item, participantUid) {
   };
 }
 
-export function createTranscriptRelay({ participantUid, post }) {
+export function createTranscriptRelay({ participantUid, sessionId, post }) {
   const delivered = new Set();
   const pending = new Set();
 
   return async (item) => {
-    const event = normalizeFinalHumanTurn(item, participantUid);
+    const event = normalizeFinalHumanTurn(item, participantUid, sessionId);
     if (!event || delivered.has(event.turn_id) || pending.has(event.turn_id)) return false;
     pending.add(event.turn_id);
     try {

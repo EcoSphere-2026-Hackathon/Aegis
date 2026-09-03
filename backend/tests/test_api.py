@@ -111,8 +111,9 @@ class VoiceSessionRouteTests(ApiTestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_voice_session_start_and_renew_response_shape(self) -> None:
-        from unittest.mock import Mock
         from datetime import datetime, timezone
+        from unittest.mock import Mock
+
         from backend.agora.sessions import VoiceSession
         from backend.agora.tokens import VoiceTokens
 

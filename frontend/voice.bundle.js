@@ -61454,7 +61454,10 @@
     }
     return null;
   }
-  function normalizeFinalHumanTurn(item, participantUid) {
+  function scopedTurnId(sessionId, turnId) {
+    return sessionId ? `${sessionId}:${turnId}` : String(turnId);
+  }
+  function normalizeFinalHumanTurn(item, participantUid, sessionId) {
     if (!item || !participantUid) return null;
     const isFinal = item.metadata && typeof item.metadata.final === "boolean" ? item.metadata.final : isCompleted(item.status);
     if (!isFinal) return null;
@@ -61465,18 +61468,18 @@
     if (!turnId || !text || !timestamp) return null;
     return {
       uid: String(participantUid),
-      turn_id: turnId,
+      turn_id: scopedTurnId(sessionId, turnId),
       role: "human",
       text,
       final: true,
       timestamp
     };
   }
-  function createTranscriptRelay({ participantUid, post }) {
+  function createTranscriptRelay({ participantUid, sessionId, post }) {
     const delivered = /* @__PURE__ */ new Set();
     const pending = /* @__PURE__ */ new Set();
     return async (item) => {
-      const event = normalizeFinalHumanTurn(item, participantUid);
+      const event = normalizeFinalHumanTurn(item, participantUid, sessionId);
       if (!event || delivered.has(event.turn_id) || pending.has(event.turn_id)) return false;
       pending.add(event.turn_id);
       try {
@@ -61571,8 +61574,9 @@
     if (!response.ok) throw new Error(body.error?.message || `Voice request failed (${response.status})`);
     return body;
   }
-  var transcriptToAegis = createTranscriptRelay({
+  var relayForSession = (sessionId) => createTranscriptRelay({
     participantUid: clientUid,
+    sessionId,
     post: (event) => api2("/api/transcript", {
       method: "POST",
       body: JSON.stringify(event)
@@ -61622,6 +61626,7 @@
       await rtm.login({ token: session.rtm_token });
       await rtm.subscribe(session.channel);
       const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
+      const transcriptToAegis = relayForSession(session.session_id);
       ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {
         history.forEach((item) => transcriptToAegis(item).catch((error) => {
           console.warn("Transcript relay failed", error);

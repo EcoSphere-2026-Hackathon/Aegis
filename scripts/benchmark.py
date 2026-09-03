@@ -36,6 +36,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts import use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+
 from backend.common.clock import ManualClock  # noqa: E402
 from backend.common.config import AppConfig, GovernorConfig, load_config  # noqa: E402
 from backend.common.logging import configure_logging  # noqa: E402

@@ -31,8 +31,12 @@ async function api(url, options = {}) {
   return body;
 }
 
-const transcriptToAegis = createTranscriptRelay({
+/* Built per session, not once per page: the turn ids AEGIS deduplicates on
+ * are scoped to the voice session, so the relay cannot be created before one
+ * exists. See scopedTurnId in transcript_relay.js. */
+const relayForSession = (sessionId) => createTranscriptRelay({
   participantUid: clientUid,
+  sessionId,
   post: (event) => api("/api/transcript", {
     method: "POST",
     body: JSON.stringify(event),
@@ -87,6 +91,7 @@ async function start() {
       await rtm.login({ token: session.rtm_token });
       await rtm.subscribe(session.channel);
       const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
+      const transcriptToAegis = relayForSession(session.session_id);
       ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {
         history.forEach((item) => transcriptToAegis(item).catch((error) => {
           console.warn("Transcript relay failed", error);

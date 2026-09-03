@@ -12,11 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.agora.sessions import SessionAwareSpeechSink, VoiceSessionManager
 from backend.common.clock import SYSTEM_CLOCK, Clock
 from backend.common.config import AppConfig, load_config
 from backend.common.logging import get_logger
 from backend.common.metrics import Metrics
-from backend.agora.sessions import SessionAwareSpeechSink, VoiceSessionManager
 from backend.extraction.contracts import ExtractionProvider
 from backend.extraction.providers.deterministic import DeterministicProvider
 from backend.extraction.service import ExtractionService
@@ -117,14 +117,28 @@ def build_runtime(
     events = EventBus(clock=clock)
     governor = Governor(config.governor, clock=clock)
 
+    resolved_provider = provider or build_provider(config)
+    # A hosted model that times out or returns garbage would otherwise cost
+    # the whole utterance -- and the utterance it drops may be the one
+    # proposing a destructive action. The offline extractor is already in the
+    # process, so the local fallback costs nothing but the wiring. Skipped
+    # when it is *already* the primary: falling back to yourself is not a
+    # fallback, just a second identical failure.
+    fallback = (
+        None
+        if isinstance(resolved_provider, DeterministicProvider)
+        else DeterministicProvider()
+    )
+
     extraction = ExtractionService(
-        provider or build_provider(config),
+        resolved_provider,
         clock=clock,
         max_attempts=config.llm.max_attempts,
         known_targets=topology.nodes(),
         known_metrics=telemetry.metric_names,
         metric_aliases=telemetry.metric_aliases,
         metrics=metrics,
+        fallback_provider=fallback,
     )
 
     voice_sessions = None

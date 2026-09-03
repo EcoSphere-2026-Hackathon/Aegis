@@ -41,6 +41,7 @@ from backend.common.logging import (
 )
 from backend.common.metrics import (
     EXTRACTION_CACHE_HITS,
+    EXTRACTION_FALLBACK_USED,
     EXTRACTION_FAST_PATH,
     EXTRACTION_PROVIDER_CALLS,
     EXTRACTION_REQUESTS,
@@ -115,10 +116,14 @@ class ExtractionService:
         metric_aliases: Optional[dict] = None,
         metrics: Optional[Metrics] = None,
         cache_size: int = EXTRACTION_CACHE_SIZE,
+        fallback_provider: Optional[ExtractionProvider] = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         self._provider = provider
+        #: Tried when the configured provider cannot produce usable claims.
+        #: Not a retry -- a different, local, offline extractor.
+        self._fallback = fallback_provider
         self._clock = clock
         self._max_attempts = max_attempts
         self._known_targets = tuple(known_targets)
@@ -262,7 +267,11 @@ class ExtractionService:
 
         if response is None:
             self._remember(event)
-            return self._degraded_outcome(event, attempts, elapsed_ms, failure or "provider_unavailable")
+            reason = failure or "provider_unavailable"
+            recovered = self._fallback_outcome(event, request, attempts, elapsed_ms, reason)
+            if recovered is not None:
+                return recovered
+            return self._degraded_outcome(event, attempts, elapsed_ms, reason)
 
         try:
             claims, rejected = self._parse(response.raw_text, event)
@@ -275,7 +284,14 @@ class ExtractionService:
                 failure_type=type(exc).__name__,
                 detail=exc.message,
             )
-            return self._degraded_outcome(event, attempts, elapsed_ms, f"{exc.code}: {exc.message}")
+            reason = f"{exc.code}: {exc.message}"
+            # Malformed output is not retried by the loop above -- the call
+            # succeeded, the content was garbage -- so the fallback is the
+            # only thing standing between this and a lost utterance.
+            recovered = self._fallback_outcome(event, request, attempts, elapsed_ms, reason)
+            if recovered is not None:
+                return recovered
+            return self._degraded_outcome(event, attempts, elapsed_ms, reason)
 
         if not claims:
             claims = (self._none_claim(event),)
@@ -312,6 +328,84 @@ class ExtractionService:
         )
 
     # -- internals --------------------------------------------------------
+
+    def _fallback_outcome(
+        self,
+        event: TranscriptEvent,
+        request: ProviderRequest,
+        attempts: int,
+        elapsed_ms: float,
+        reason: str,
+    ) -> Optional[ExtractionOutcome]:
+        """Extract locally when the configured provider could not.
+
+        A hosted model that times out, rate-limits or returns garbage would
+        otherwise cost the whole utterance: the loop survives, but it survives
+        *blind*, and the utterance it dropped may have been the one proposing
+        a destructive action. Since a complete offline extractor already ships
+        in this repository, going blind is a choice rather than a constraint.
+
+        Deliberately not a retry. The primary has already had its attempts;
+        this is a different extractor with different failure modes, which is
+        the only kind of fallback worth having.
+
+        Three properties keep it honest:
+
+        * **Same validation.** The result goes through the identical parse and
+          vocabulary constraint as any other provider, so a fallback claim
+          cannot reference a component the topology does not have.
+        * **Never cached.** The cache stores what the *configured* provider
+          said; seeding it from the fallback would serve degraded extractions
+          long after the outage ended.
+        * **Visible.** The provider name is recorded on the outcome, the
+          failure that caused it is kept in ``failure_reason``, and it is
+          counted separately -- so no run can silently pass as a live-model
+          one.
+        """
+        if self._fallback is None:
+            return None
+
+        try:
+            response = self._fallback.complete(request)
+            claims, rejected = self._parse(response.raw_text, event)
+        except Exception as exc:  # noqa: BLE001 - the fallback must not raise either
+            _log.warning(
+                "extraction fallback also failed",
+                stage=STAGE_CLAIM_REJECTED,
+                fallback=getattr(self._fallback, "name", "unknown"),
+                failure_type=type(exc).__name__,
+            )
+            return None
+
+        substantive = [claim for claim in claims if claim.type is not ClaimType.NONE]
+        if not substantive:
+            # Nothing was recovered, so report the outage rather than dressing
+            # an empty result up as a successful extraction.
+            return None
+
+        self._metrics.increment(EXTRACTION_FALLBACK_USED)
+        _log.warning(
+            "extraction fell back to the local extractor",
+            stage=STAGE_CLAIM_EXTRACTED,
+            turn_id=event.turn_id,
+            primary=getattr(self._provider, "name", "unknown"),
+            fallback=getattr(self._fallback, "name", "unknown"),
+            detail=reason,
+            claim_types=[claim.type.value for claim in claims],
+        )
+        return ExtractionOutcome(
+            claims=claims,
+            rejected=rejected,
+            provider=f"{getattr(self._fallback, 'name', 'fallback')}_fallback",
+            model="local",
+            prompt_version=PROMPT_VERSION,
+            attempts=attempts,
+            latency_ms=elapsed_ms,
+            # Not degraded: claims were produced and the loop is not blind.
+            # The reason the primary failed is kept so the run is auditable.
+            degraded=False,
+            failure_reason=reason,
+        )
 
     def _parse(
         self, raw_text: str, event: TranscriptEvent

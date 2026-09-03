@@ -438,6 +438,50 @@ class JustificationRetractionTests(PipelineTestCase):
         )
         self.assertIn(RiskFindingCode.STALE_JUSTIFICATION, after.risk_verdict.codes)
 
+    def test_retraction_propagates_when_reality_arrives_as_evidence(self) -> None:
+        """The same collapse, delivered through the multimodal door.
+
+        A screenshot reading and a telemetry push retract a belief exactly as
+        a spoken correction does, so everything resting on that belief has to
+        be re-examined the same way. This propagation was missing on the
+        evidence path: the theory went stale, and the rollback built on it
+        kept the LOW verdict computed against a belief nobody held any more --
+        the precise failure the justification graph exists to prevent,
+        reachable through /api/evidence.
+        """
+        self._propose_on_a_live_theory()
+        action_id = next(
+            claim.claim_id
+            for claim in self.action.claims
+            if claim.type is ClaimType.PROPOSED_ACTION
+        )
+        before = self.rt.store.get_proposed_action(action_id)
+        self.assertIs(before.risk_verdict.risk_tier, RiskTier.LOW)
+
+        self.clock.advance(60)
+        self.rt.telemetry.set_value("error_rate", 0.3)
+        self.rt.pipeline.ingest_evidence(
+            Evidence(
+                source_type=EvidenceSourceType.VISUAL,
+                source=EvidenceSource.SCREENSHOT_UPLOAD,
+                metric_name="error_rate",
+                value=0.3,
+                unit="%",
+                extraction_certainty=ExtractionCertainty.HIGH,
+                uploader_uid="1001",
+                timestamp=self.clock.now(),
+            )
+        )
+
+        after = self.rt.store.get_proposed_action(action_id)
+        self.assertIs(after.status, ProposedActionStatus.PENDING, "AEGIS altered the action")
+        self.assertGreater(
+            after.risk_verdict.risk_tier.rank,
+            before.risk_verdict.risk_tier.rank,
+            "the stored verdict still reflects the collapsed theory",
+        )
+        self.assertIn(RiskFindingCode.STALE_JUSTIFICATION, after.risk_verdict.codes)
+
     def test_a_resolved_action_is_not_dragged_back_up(self) -> None:
         # Humans already decided. Re-litigating it because a number moved
         # would be AEGIS arguing with a decision that has been made.

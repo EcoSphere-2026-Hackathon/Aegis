@@ -38,6 +38,13 @@ from backend.tests.support import at, make_action
 WINDOW = 120.0
 
 
+#: Distinguishes "the caller did not care about the wording" from "the caller
+#: is deliberately pairing this text with that target_ref". The second is a
+#: real test case -- an extractor attaching a component nobody said -- so it
+#: has to stay expressible.
+_UNSET = object()
+
+
 def reply(
     *,
     when: float = 20,
@@ -45,8 +52,19 @@ def reply(
     target_ref: str = None,
     action_kind: ActionKind = None,
     kind: ClaimType = ClaimType.CONFIRMATION,
-    text: str = "yeah, go ahead",
+    text=_UNSET,
 ) -> ExtractedClaim:
+    """A human reply.
+
+    When a ``target_ref`` is given and no wording is, the text names that
+    component -- because that is the only way a human can name one. A claim
+    carrying ``target_ref="core-db"`` on the words "yeah, go ahead" describes
+    an utterance that cannot happen, and the policy now treats that
+    combination as the extractor guessing rather than the human naming.
+    Tests that want the guess pass ``text`` explicitly.
+    """
+    if text is _UNSET:
+        text = f"yeah, go ahead with {target_ref}" if target_ref else "yeah, go ahead"
     return ExtractedClaim(
         type=kind,
         text=text,
@@ -215,6 +233,77 @@ class NothingToResolveTests(unittest.TestCase):
         self.assertIsNone(outcome.action)
         # Nothing to ask about: they named something that was never proposed.
         self.assertFalse(outcome.outcome.needs_clarification)
+
+
+class InterpretationCannotAuthoriseTests(unittest.TestCase):
+    """A target the human never said must not select what gets authorised.
+
+    The extraction service already refuses component names the topology has
+    never heard of. It cannot refuse a *real* one attached to an utterance
+    that never mentioned it -- and the model is handed the list of pending
+    targets as context, which is precisely the set whose members would cause
+    an authorisation if guessed.
+
+    Left unchecked, that guess takes the named-target path and authorises one
+    specific action while skipping both the "exactly one open action" rule
+    and the timeliness rule. Interpretation would have become authorisation,
+    which is the boundary the whole system is built to hold.
+    """
+
+    def test_a_target_the_utterance_never_mentions_does_not_authorise(self) -> None:
+        core = make_action(when=10, target_ref="core-db")
+        search = make_action(when=12, target_ref="search-index")
+        # The words are a bare yes. "core-db" is the extractor's guess.
+        outcome = decide(
+            [core, search],
+            reply(when=20, target_ref="core-db", text="yeah, go ahead"),
+        )
+        self.assertIs(outcome.outcome, ResolutionOutcome.AMBIGUOUS)
+        self.assertIsNone(outcome.action)
+
+    def test_the_guess_cannot_bypass_the_timeliness_rule_either(self) -> None:
+        # One open action, long cold. A bare reply is out of window; a guessed
+        # target must not turn it into a resolution.
+        stale = make_action(when=10, target_ref="core-db")
+        outcome = decide(
+            [stale],
+            reply(when=9999, target_ref="core-db", text="yeah, go ahead"),
+        )
+        self.assertIs(outcome.outcome, ResolutionOutcome.OUT_OF_WINDOW)
+        self.assertIsNone(outcome.action)
+
+    def test_a_genuinely_named_target_still_resolves(self) -> None:
+        # The guard must not cost the feature it protects.
+        core = make_action(when=10, target_ref="core-db")
+        search = make_action(when=12, target_ref="search-index")
+        outcome = decide(
+            [core, search],
+            reply(when=20, target_ref="core-db", text="yes, roll core-db back"),
+        )
+        self.assertIs(outcome.outcome, ResolutionOutcome.RESOLVED)
+        self.assertEqual(outcome.action.target_ref, "core-db")
+
+    def test_people_say_core_not_core_db(self) -> None:
+        # Corroboration is lexical and generous: one distinctive word of the
+        # component name is how humans actually refer to it out loud.
+        core = make_action(when=10, target_ref="core-db")
+        search = make_action(when=12, target_ref="search-index")
+        outcome = decide(
+            [core, search],
+            reply(when=20, target_ref="core-db", text="yeah, roll Core back"),
+        )
+        self.assertIs(outcome.outcome, ResolutionOutcome.RESOLVED)
+        self.assertEqual(outcome.action.target_ref, "core-db")
+
+    def test_punctuation_does_not_decide_authorisation(self) -> None:
+        for spoken in ("go ahead on core db", "go ahead on coredb", "go ahead on CORE-DB"):
+            with self.subTest(spoken=spoken):
+                core = make_action(when=10, target_ref="core-db")
+                search = make_action(when=12, target_ref="search-index")
+                outcome = decide(
+                    [core, search], reply(when=20, target_ref="core-db", text=spoken)
+                )
+                self.assertIs(outcome.outcome, ResolutionOutcome.RESOLVED)
 
 
 class DecisionShapeTests(unittest.TestCase):

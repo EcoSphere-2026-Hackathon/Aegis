@@ -31,7 +31,7 @@ from starlette.responses import (
     Response,
     StreamingResponse,
 )
-from starlette.routing import Mount, Route
+from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from backend.api.security import (
@@ -483,7 +483,9 @@ class AegisApi:
     # -- assembly ---------------------------------------------------------
 
     def build(self) -> Starlette:
-        routes = [
+        # Annotated: the static mount appended below is a Mount, not a Route,
+        # and an inferred list[Route] rejects it.
+        routes: list[BaseRoute] = [
             Route("/api/health", _guarded(self.health), methods=["GET"]),
             Route("/api/state", _guarded(self.state), methods=["GET"]),
             Route("/api/topology", _guarded(self.topology), methods=["GET"]),

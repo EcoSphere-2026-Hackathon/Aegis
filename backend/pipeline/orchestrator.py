@@ -365,7 +365,9 @@ class IncidentPipeline:
                     verdicts.append(verdict)
                 _record(action_decision)
             elif claim.type.is_resolution:
-                resolved_id, clarification = self._handle_resolution(claim)
+                resolved_id, clarification = self._handle_resolution(
+                    claim, utterance=event.text
+                )
                 if resolved_id:
                     resolved.append(resolved_id)
                 _record(clarification)
@@ -550,7 +552,7 @@ class IncidentPipeline:
         return verdict, decision
 
     def _handle_resolution(
-        self, claim: ExtractedClaim
+        self, claim: ExtractedClaim, *, utterance: str
     ) -> tuple[Optional[str], Optional[GovernorDecision]]:
         """Apply an explicit human confirm / decline / hold.
 
@@ -569,6 +571,10 @@ class IncidentPipeline:
             claim,
             window_seconds=self._config.confirmation_window_seconds,
             last_raised_at=self._store.last_raised_at([a.claim_id for a in pending]),
+            # The human's own words, not the extractor's echo of them. A
+            # target_ref the utterance does not support is a guess, and a
+            # guess must not select which action gets authorised.
+            utterance=utterance,
         )
 
         if not decision.outcome.is_resolution:
@@ -867,22 +873,40 @@ class IncidentPipeline:
 
         active = self._store.active_hypotheses()
         transitions = determine_transitions_from_evidence(active, evidence)
+
+        escalations: list[GovernorDecision] = []
         if not transitions.is_empty:
             self._store.apply_hypothesis_transitions(transitions, touched_at=evidence.timestamp)
+            # A belief died. Whatever was concluded from it has to be looked
+            # at again -- and this path reaches that code the same way the
+            # spoken-turn path does.
+            #
+            # It was missing here, which left the product's headline property
+            # working through one of its two doors. A screenshot or a
+            # telemetry push could retract the exact theory a pending
+            # rollback was resting on, and the rollback would sit there still
+            # carrying the LOW verdict computed against a belief nobody held
+            # any more -- the precise failure _revisit_dependents exists to
+            # prevent. Ordered before grounding to match _handle_hypothesis,
+            # so the more consequential finding reaches the window first.
+            escalations.extend(self._revisit_dependents(transitions.stale_claim_ids))
 
         contradicted = [h for h in active if h.claim_id in transitions.stale_claim_ids]
         if not contradicted:
-            return None
+            return escalations[0] if escalations else None
 
         subject = contradicted[-1]
         verdict = evaluate_claim_grounding(subject, self._store.latest_evidence_per_metric())
         self._publish_verdict(verdict, subject_claim_id=subject.claim_id)
         if verdict.risk_tier is RiskTier.LOW:
-            return None
+            return escalations[0] if escalations else None
 
         decision = self._governor.decide(verdict, subject_claim_id=subject.claim_id)
         self._delivery.deliver(decision)
-        return decision
+        # The grounding decision is the one *about this evidence*, so it is
+        # what the caller hears about; an escalation stands in only when the
+        # evidence itself produced nothing to say.
+        return decision or (escalations[0] if escalations else None)
 
     def _revisit_dependents(
         self, invalidated_hypothesis_ids: Sequence[str]

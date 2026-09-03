@@ -43,6 +43,10 @@ from typing import Optional, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts import use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+
 from backend.common.config import load_config  # noqa: E402
 from backend.common.logging import configure_logging  # noqa: E402
 from backend.common.models import TranscriptEvent  # noqa: E402

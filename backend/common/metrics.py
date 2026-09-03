@@ -197,6 +197,11 @@ EXTRACTION_CACHE_HITS = "extraction_cache_hits"
 EXTRACTION_FAST_PATH = "extraction_fast_path_hits"
 EXTRACTION_PROVIDER_CALLS = "extraction_provider_calls"
 EXTRACTION_DEGRADED = "extraction_degraded"
+#: The configured provider failed and the local extractor produced the claims
+#: instead. Counted separately from `degraded`, which means nothing was
+#: extracted at all -- the difference between reasoning on weaker input and
+#: not reasoning on that utterance.
+EXTRACTION_FALLBACK_USED = "extraction_fallback_used"
 INTERVENTIONS_SPOKEN = "interventions_spoken"
 INTERVENTIONS_QUEUED = "interventions_queued"
 INTERVENTIONS_PREEMPTED = "interventions_preempted"

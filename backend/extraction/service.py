@@ -467,15 +467,6 @@ class ExtractionService:
         """
         updates: dict[str, Any] = {}
 
-        if claim.target_ref and self._known_targets and claim.target_ref not in self._known_targets:
-            _log.warning(
-                "dropping unknown target_ref from claim",
-                stage=STAGE_CLAIM_REJECTED,
-                target_ref=claim.target_ref,
-                known_targets=list(self._known_targets),
-            )
-            updates["target_ref"] = None
-
         if claim.metric_ref and self._known_metrics and claim.metric_ref not in self._known_metrics:
             _log.warning(
                 "dropping unknown metric_ref from claim",

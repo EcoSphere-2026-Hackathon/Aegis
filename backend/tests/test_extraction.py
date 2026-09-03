@@ -120,16 +120,6 @@ class ValidationTests(unittest.TestCase):
         self.assertIs(outcome.claims[0].type, ClaimType.NONE)
         self.assertFalse(outcome.degraded)  # heard, nothing usable != could not hear
 
-    def test_unknown_target_is_dropped_and_action_degrades_to_hypothesis(self) -> None:
-        payload = json.dumps(
-            {"claims": [{"type": "proposed_action", "text": "restart the flux capacitor",
-                         "target_ref": "flux-capacitor", "action_kind": "restart"}]}
-        )
-        outcome = service_with(ScriptedProvider(payload)).extract(transcript("x"))
-        claim = outcome.claims[0]
-        self.assertIs(claim.type, ClaimType.HYPOTHESIS)
-        self.assertIsNone(claim.target_ref)
-
     def test_unknown_metric_and_its_value_are_dropped(self) -> None:
         payload = json.dumps(
             {"claims": [{"type": "hypothesis", "text": "flux is at 40",
@@ -581,3 +571,31 @@ class ExtractionCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SemanticRulesTests(unittest.TestCase):
+    def _service(self, provider: ScriptedProvider) -> ExtractionService:
+        return service_with(provider, fallback_provider=None)
+
+    def test_fact(self):
+        outcome = self._service(ScriptedProvider('{"claims": [{"type": "fact", "text": "foo"}]}')).extract(transcript("foo"))
+        self.assertEqual(outcome.claims[0].type, ClaimType.FACT)
+
+    def test_hypothesis(self):
+        outcome = self._service(ScriptedProvider('{"claims": [{"type": "hypothesis", "text": "foo"}]}')).extract(transcript("foo"))
+        self.assertEqual(outcome.claims[0].type, ClaimType.HYPOTHESIS)
+        
+    def test_proposed_action(self):
+        outcome = self._service(ScriptedProvider('{"claims": [{"type": "proposed_action", "text": "foo", "target_ref": "payment-api", "action_kind": "restart"}]}')).extract(transcript("foo"))
+        self.assertEqual(outcome.claims[0].type, ClaimType.PROPOSED_ACTION)
+
+    def test_novel_target_ref_is_preserved(self):
+        outcome = self._service(ScriptedProvider('{"claims": [{"type": "proposed_action", "text": "foo", "target_ref": "unknown-service", "action_kind": "restart"}]}')).extract(transcript("foo"))
+        self.assertEqual(outcome.claims[0].type, ClaimType.PROPOSED_ACTION)
+        self.assertEqual(outcome.claims[0].target_ref, "unknown-service")
+
+    def test_llm_failure_degraded_path_without_fallback(self):
+        provider = ScriptedProvider("{}", fail_times=99)
+        outcome = self._service(provider).extract(transcript("foo"))
+        self.assertTrue(outcome.degraded)
+        self.assertEqual(outcome.claims[0].type, ClaimType.NONE)
+

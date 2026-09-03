@@ -124,11 +124,12 @@ def build_runtime(
     # process, so the local fallback costs nothing but the wiring. Skipped
     # when it is *already* the primary: falling back to yourself is not a
     # fallback, just a second identical failure.
-    fallback = (
-        None
-        if isinstance(resolved_provider, DeterministicProvider)
-        else DeterministicProvider()
-    )
+    if config.llm.fallback == "none" or isinstance(resolved_provider, DeterministicProvider):
+        fallback = None
+    elif config.llm.fallback == "deterministic":
+        fallback = DeterministicProvider()
+    else:
+        fallback = None
 
     extraction = ExtractionService(
         resolved_provider,

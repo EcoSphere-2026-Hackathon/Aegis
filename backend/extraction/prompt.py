@@ -36,14 +36,14 @@ Claim types:
 like might/probably/looks like/I think, or any unverified causal claim. \
 "It's probably the connection pool." A stated measurement someone is \
 reporting from memory or impression is a hypothesis, not a fact.
-- "decision": the group settling on a course of action. "We're holding off on \
-the rollback." "Okay, we're going with the restart."
 - "proposed_action": someone proposing a concrete operation on a component. \
 "Let's roll Core back to the last version."
-- "confirmation": explicitly approving a proposed action. "Yes, go ahead."
-- "override": explicitly rejecting a proposed action. "No, don't do that."
-- "hold": explicitly pausing a proposed action pending more information. \
-"Wait, hold on that."
+- "confirmation": explicitly approving a PROPOSED ACTION that is currently pending. "Yes, go ahead."
+- "override": explicitly rejecting a PROPOSED ACTION that is currently pending. "No, don't do that."
+- "hold": explicitly pausing a PROPOSED ACTION that is currently pending. "Wait, hold on that."
+- "decision": the group settling on a course of action independent of a pending proposal. \
+"We're holding off on the rollback." "Okay, we're going with the restart." \
+Use "confirmation", "override", or "hold" instead if they are answering a pending action.
 - "none": the utterance contains nothing extractable (small talk, filler, \
 acknowledgements).
 
@@ -52,20 +52,27 @@ Rules:
 - Return exactly one claim of type "none" if there is nothing to extract.
 - "text" must be a normalised, self-contained restatement of the claim, not a \
 verbatim transcript echo. Resolve pronouns using the recent turns.
-- Only use component names from the known targets list. If none applies, use null.
+- Use component names from the known targets list when applicable. If the \
+utterance names a novel component NOT in the list, extract its name exactly as \
+said into target_ref. Do NOT use null if an entity was explicitly named.
 - Only use metric names from the known metrics list. If none applies, use null.
 - When someone states a number for a metric, set metric_ref, claimed_value \
 (a bare number) and claimed_unit.
-- For "proposed_action", target_ref is required, and action_kind must be one \
-of: rollback, restart, scale, config_change, failover, migration, other. If \
-the utterance names a version to move to, set target_schema_version.
+- For "proposed_action", target_ref is required (even if novel), and action_kind \
+must be one of: rollback, restart, scale, config_change, failover, migration, \
+other. If the utterance names a version to move to, set target_schema_version.
+- Proposed actions remain "proposed_action" even if the target is unknown.
+- Questions (e.g. "Could it be X?") are hypotheses or none, never facts.
+- Decisions, holds, and confirmations must reflect actual semantic intent, not \
+merely the presence of isolated keywords like "wait" or "yes".
 - For "decision", set decision_stance to "hold" if the decision is to NOT \
 proceed with the target, or "proceed" if it is to go ahead. If the polarity \
 is genuinely unclear, use null. Never guess.
-- Never invent a claim that was not said. If unsure, prefer "none".
+- Never invent a claim, fact, entity, or action that was not explicitly said. \
+If unsure, prefer "none".
 - Never output a risk level, a severity, a recommendation, or a warning.
-
-Respond with JSON only, matching the provided schema exactly."""
+- Your entire response must be a single JSON object with a top-level `"claims"` \
+key containing an array of claim objects, matching the provided schema exactly."""
 
 
 #: JSON Schema handed to the provider. Hand-written rather than generated

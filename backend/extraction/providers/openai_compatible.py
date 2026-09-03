@@ -50,13 +50,19 @@ class OpenAICompatibleProvider:
         if not self._config.api_key:
             raise ProviderError("no API key configured for the extraction provider", provider=self.name)
 
+        system_prompt = request.system_prompt
+        if request.json_schema:
+            import json
+            system_prompt += "\n\nSchema:\n" + json.dumps(request.json_schema, indent=2)
+            system_prompt += "\n\nYou MUST return valid json."
+
         payload: dict[str, Any] = {
             "model": self._config.model,
             "temperature": self._config.temperature,
             "max_tokens": request.max_output_tokens,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": request.system_prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.user_prompt},
             ],
         }

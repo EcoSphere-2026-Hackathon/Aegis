@@ -166,8 +166,7 @@ def _describe_hypothesis(hypothesis: Hypothesis) -> str:
         return _humanise_metric(hypothesis.metric_ref).split()[0]
     if hypothesis.target_ref:
         return hypothesis.target_ref
-    words = hypothesis.text.split()
-    return " ".join(words[:4]) if words else "stated"
+    return "suspected"
 
 
 def _hypothesis_is_corroborated(

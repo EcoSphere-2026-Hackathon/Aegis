@@ -180,6 +180,7 @@ class LlmConfig:
     """
 
     provider: str = "deterministic"
+    fallback: str = "deterministic"
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     api_key: Secret = Secret("")
@@ -346,6 +347,7 @@ def load_config(
 
     llm = LlmConfig(
         provider=(_get(merged, "LLM_PROVIDER") or "deterministic").lower(),
+        fallback=(_get(merged, "LLM_FALLBACK") or "deterministic").lower(),
         base_url=_get(merged, "LLM_BASE_URL") or "https://api.openai.com/v1",
         model=_get(merged, "LLM_MODEL") or "gpt-4o-mini",
         api_key=Secret(_get(merged, "LLM_API_KEY") or ""),

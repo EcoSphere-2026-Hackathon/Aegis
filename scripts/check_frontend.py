@@ -179,7 +179,7 @@ def check_hero(page, base: str) -> list[str]:
 def check_console_page(page, base: str, token: str) -> list[str]:
     """The operator console: SSE feed, state rendering, text ingest."""
     problems: list[str] = []
-    url = f"{base}/?token={token}" if token else base
+    url = f"{base}/command?token={token}" if token else f"{base}/command"
     # Not networkidle: the console holds an SSE connection to /api/events for
     # as long as it is open, so the network is never idle and never will be.
     page.goto(url, wait_until="domcontentloaded")

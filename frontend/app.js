@@ -142,7 +142,7 @@
   /* ── interventions ───────────────────────────────────────────────── */
 
   function renderIntervention(payload) {
-    const key = `${payload.subject_claim_id || ""}:${payload.text || payload.outcome}:${payload.sequence}`;
+    const key = `${payload.subject_claim_id || ""}:${payload.text || payload.outcome}`;
     if (state.seenInterventions.has(key)) return;
     state.seenInterventions.add(key);
 
@@ -264,8 +264,7 @@
           outcome: item.outcome,
           risk_tier: item.risk_tier,
           spoken: !!item.spoken_text,
-          reasons: item.reasons,
-          sequence: item.intervention_id
+          reasons: item.reasons
         });
       });
     }

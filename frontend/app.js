@@ -254,6 +254,54 @@
     });
 
     els.evidenceCount.textContent = (view.evidence || []).length;
+
+    // Hydrate interventions
+    if (view.interventions && view.interventions.length > 0) {
+      view.interventions.forEach((item) => {
+        renderIntervention({
+          subject_claim_id: item.subject_claim_id,
+          text: item.spoken_text,
+          outcome: item.outcome,
+          risk_tier: item.risk_tier,
+          spoken: !!item.spoken_text,
+          reasons: item.reasons,
+          sequence: item.intervention_id
+        });
+      });
+    }
+
+    // Hydrate conversation
+    const allClaims = [
+      ...(view.facts || []),
+      ...(view.hypotheses || []),
+      ...(view.decisions || []),
+      ...(view.proposed_actions || [])
+    ];
+    const turnsById = new Map();
+    for (const claim of allClaims) {
+      if (!claim.source_turn_id) continue;
+      if (!turnsById.has(claim.source_turn_id)) {
+        turnsById.set(claim.source_turn_id, {
+          turn_id: claim.source_turn_id,
+          uid: claim.speaker_uid,
+          at: claim.timestamp,
+          modality: claim.source_modality || "voice",
+          texts: []
+        });
+      }
+      const turn = turnsById.get(claim.source_turn_id);
+      if (!turn.texts.includes(claim.text)) turn.texts.push(claim.text);
+    }
+    const sortedTurns = Array.from(turnsById.values()).sort((a, b) => new Date(a.at) - new Date(b.at));
+    for (const turnData of sortedTurns) {
+      renderTurn({
+        turn_id: turnData.turn_id,
+        uid: turnData.uid,
+        at: turnData.at,
+        modality: turnData.modality,
+        text: turnData.texts.join(" ")
+      });
+    }
   }
 
   function pill(text, className) {

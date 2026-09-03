@@ -45,8 +45,8 @@ export function normalizeFinalHumanTurn(item, participantUid, sessionId) {
 
   // The toolkit hardcodes `status = 1` (END) for all user transcripts, even interim ones.
   // We must inspect the raw message metadata to determine if it is truly final.
-  const isFinal = (item.metadata && typeof item.metadata.final === "boolean")
-    ? item.metadata.final
+  const isFinal = item.metadata
+    ? Boolean(item.metadata.final)
     : isCompleted(item.status);
 
   if (!isFinal) return null;

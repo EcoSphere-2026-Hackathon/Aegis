@@ -61459,7 +61459,7 @@
   }
   function normalizeFinalHumanTurn(item, participantUid, sessionId) {
     if (!item || !participantUid) return null;
-    const isFinal = item.metadata && typeof item.metadata.final === "boolean" ? item.metadata.final : isCompleted(item.status);
+    const isFinal = item.metadata ? Boolean(item.metadata.final) : isCompleted(item.status);
     if (!isFinal) return null;
     if (String(item.uid) !== String(participantUid) && String(item.uid) !== "0") return null;
     const turnId = String(item.turn_id || "").trim();
@@ -61664,9 +61664,12 @@
       const ai = await AgoraVoiceAI.init({ rtcEngine: rtc, rtmConfig: { rtmEngine: rtm } });
       const transcriptToAegis = relayForSession(session.session_id);
       ai.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (history) => {
-        history.forEach((item) => transcriptToAegis(item).catch((error) => {
-          console.warn("Transcript relay failed", error);
-        }));
+        history.forEach((item) => {
+          console.log("[TRANSCRIPT ITEM]", item);
+          transcriptToAegis(item).catch((error) => {
+            console.warn("Transcript relay failed", error);
+          });
+        });
       });
       ai.on(AgoraVoiceAIEvents.AGENT_STATE_CHANGED, (_agentUid, event) => {
         isAgentConnected = event.state === "connected";

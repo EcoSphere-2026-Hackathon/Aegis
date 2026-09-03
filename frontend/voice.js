@@ -40,19 +40,19 @@ const transcriptToAegis = createTranscriptRelay({
 });
 
 function waitForAgent(rtc, agentUid) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      rtc.off("user-joined", onUserJoined);
-      reject(new Error("The agent did not join the RTC channel in time."));
-    }, 20000);
-    const onUserJoined = (uid) => {
-      if (String(uid) !== String(agentUid)) return;
-      clearTimeout(timeout);
-      rtc.off("user-joined", onUserJoined);
-      resolve();
-    };
-    rtc.on("user-joined", onUserJoined);
-  });
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        rtc.off("user-joined", onUserJoined);
+        reject(new Error("The agent did not join the RTC channel in time."));
+      }, 20000);
+      const onUserJoined = (user) => {
+        if (String(user.uid) !== String(agentUid)) return;
+        clearTimeout(timeout);
+        rtc.off("user-joined", onUserJoined);
+        resolve();
+      };
+      rtc.on("user-joined", onUserJoined);
+    });
 }
 
 async function start() {

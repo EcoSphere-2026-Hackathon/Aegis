@@ -21,7 +21,16 @@ function timestampToIso(value) {
 }
 
 export function normalizeFinalHumanTurn(item, participantUid) {
-  if (!item || !participantUid || !isCompleted(item.status)) return null;
+  if (!item || !participantUid) return null;
+
+  // The toolkit hardcodes `status = 1` (END) for all user transcripts, even interim ones.
+  // We must inspect the raw message metadata to determine if it is truly final.
+  const isFinal = (item.metadata && typeof item.metadata.final === "boolean")
+    ? item.metadata.final
+    : isCompleted(item.status);
+
+  if (!isFinal) return null;
+
   // The toolkit represents the local speaker as "0" in some transcript modes.
   // The authenticated voice-session UID is the identity AEGIS records.
   if (String(item.uid) !== String(participantUid) && String(item.uid) !== "0") return null;

@@ -61455,7 +61455,9 @@
     return null;
   }
   function normalizeFinalHumanTurn(item, participantUid) {
-    if (!item || !participantUid || !isCompleted(item.status)) return null;
+    if (!item || !participantUid) return null;
+    const isFinal = item.metadata && typeof item.metadata.final === "boolean" ? item.metadata.final : isCompleted(item.status);
+    if (!isFinal) return null;
     if (String(item.uid) !== String(participantUid) && String(item.uid) !== "0") return null;
     const turnId = String(item.turn_id || "").trim();
     const text = String(item.text || "").trim();
@@ -61582,8 +61584,8 @@
         rtc.off("user-joined", onUserJoined);
         reject(new Error("The agent did not join the RTC channel in time."));
       }, 2e4);
-      const onUserJoined = (uid2) => {
-        if (String(uid2) !== String(agentUid)) return;
+      const onUserJoined = (user) => {
+        if (String(user.uid) !== String(agentUid)) return;
         clearTimeout(timeout2);
         rtc.off("user-joined", onUserJoined);
         resolve();

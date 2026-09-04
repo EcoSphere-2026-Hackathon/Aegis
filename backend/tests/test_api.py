@@ -1,4 +1,4 @@
-﻿"""
+"""
 HTTP surface tests.
 
 Driven through Starlette's TestClient, so routing, validation, the auth
@@ -33,7 +33,8 @@ TOKEN = "test-token-value"
 
 
 def make_app(*, token: str = TOKEN, rpm: int = 600):
-    base = load_config(env={}, dotenv_path=None)
+    import os
+    base = load_config(env=os.environ, dotenv_path=None)
     clock = ManualClock(start=T0)
     config = AppConfig(
         agora=base.agora.__class__(**{**base.agora.__dict__, 'customer_id': Secret(''), 'customer_secret': Secret('')}).__class__(**{**base.agora.__dict__, 'customer_id': Secret(''), 'customer_secret': Secret('')}),

@@ -30,7 +30,8 @@ from backend.tests.support import T0
 
 
 def _runtime(clock: ManualClock):
-    base = load_config(env={}, dotenv_path=None, project_root=None)
+    import os
+    base = load_config(env=os.environ, dotenv_path=None, project_root=None)
     config = AppConfig(
         agora=base.agora,
         llm=base.llm,

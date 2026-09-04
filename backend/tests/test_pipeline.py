@@ -36,7 +36,8 @@ from backend.tests.support import T0
 
 
 def runtime(clock: ManualClock, *, sink=None, rate_limit: float = 45.0):
-    config = load_config(env={}, dotenv_path=None, project_root=None)
+    import os
+    config = load_config(env=os.environ, dotenv_path=None, project_root=None)
     config = AppConfig(
         agora=config.agora,
         llm=config.llm,

@@ -1,25 +1,40 @@
-import os
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from backend.common.config import load_config
-from backend.common.models import TranscriptEvent
-from backend.pipeline.factory import build_runtime
+# Same bootstrap as every other harness here: run as `python scripts/x.py`,
+# sys.path[0] is scripts/ rather than the repo root, so `backend` does not
+# import. Without this the script fails on its first line for everyone.
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts import use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+
+from backend.common.config import load_config  # noqa: E402
+from backend.common.models import TranscriptEvent  # noqa: E402
+from backend.pipeline.factory import build_runtime  # noqa: E402
+
 
 def print_state(runtime):
     view = runtime.store.incident_view(captured_at=datetime.now(timezone.utc))
     pending = runtime.store.pending_actions()
-    
+
     print("  [STATE]")
     print(f"    Facts: {len(view.facts)}")
-    for f in view.facts: print(f"      - {f.text}")
+    for f in view.facts:
+        print(f"      - {f.text}")
     print(f"    Hypotheses: {len(view.hypotheses)}")
-    for h in view.hypotheses: print(f"      - {h.text}")
+    for h in view.hypotheses:
+        print(f"      - {h.text}")
     print(f"    Pending Actions: {len(pending)}")
-    for a in pending: print(f"      - {a.action_kind.value} on {a.target_ref}")
+    for a in pending:
+        print(f"      - {a.action_kind.value} on {a.target_ref}")
     print(f"    Decisions: {len(view.decisions)}")
-    for d in view.decisions: print(f"      - {d.text} (stance: {d.stance.value})")
+    for d in view.decisions:
+        print(f"      - {d.text} (stance: {d.stance.value})")
 
 def main():
     config = load_config()
@@ -92,17 +107,17 @@ def main():
             print(f"\nINPUT: {text}")
             event = TranscriptEvent(turn_id=f"{sc['name'][:2]}_{idx}", uid="u1", text=text, final=True)
             res = runtime.pipeline.handle_transcript(event)
-            
+
             for c in res.claims:
                 print(f"-> CLAIM TYPE: {c.type.name}")
                 print(f"-> CLAIM TEXT: {c.text}")
                 print(f"-> TARGET: {c.target_ref}")
                 print(f"-> ACTION: {c.action_kind.name if c.action_kind else 'None'}")
                 print(f"-> STANCE: {c.decision_stance.name if c.decision_stance else 'None'}")
-                
+
             for d in res.decisions:
                 print(f"  [INTERVENTION] {d.action.name}: {d.spoken_text}")
-                
+
             print_state(runtime)
             sys.stdout.flush()
             time.sleep(16)

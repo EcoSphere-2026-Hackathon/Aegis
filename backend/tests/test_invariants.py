@@ -28,16 +28,28 @@ import unittest
 from typing import Sequence
 
 from backend.common.clock import ManualClock
+from backend.common.config import (
+    AppConfig,
+    GovernorConfig,
+    PipelineConfig,
+    load_config,
+)
 from backend.common.enums import (
     ProposedActionStatus,
     RiskTier,
     SourceModality,
 )
+from backend.common.metrics import TURNS_SELF_ECHO
 from backend.common.models import TranscriptEvent
 from backend.governor.governor import VOICED_MEMORY_MAX
 from backend.governor.speech import SPEAK_MAX_BYTES
+from backend.pipeline.factory import build_runtime
+from backend.pipeline.sinks import RecordingSink
 from backend.tests.support import T0
 from backend.tests.test_pipeline import runtime
+
+#: The uid AEGIS speaks under, matching AGORA_AGENT_UID's default.
+AGENT_UID = "9000"
 
 #: Turn shapes, chosen to cover the transitions that matter rather than to
 #: imitate natural speech. Each entry is (text, seconds to advance first).
@@ -218,6 +230,116 @@ class RandomisedConversationTests(InvariantHarness):
             with self.subTest(seed=seed):
                 self.setUp()
                 self.drive(seed, turns=40, duplicate_rate=0.5)
+
+
+class SelfEchoTests(unittest.TestCase):
+    """AEGIS must never hear itself into a decision.
+
+    Its speech goes out over the same channel the operator talks on, so ASR
+    transcribes it and it returns as another transcript. That is not merely
+    noise: the sentences AEGIS says are *about* actions. Re-extracting them
+    mints proposals from its own warnings, and an intervention that ends
+    "do you want to go ahead anyway?" contains an affirmative -- which against
+    a single open action resolves it. The system authorises its own
+    destructive proposal and attributes it to itself.
+
+    The browser relay filters agent transcripts, but that is one transport.
+    This asserts the guarantee at the boundary every transport shares.
+    """
+
+    def _runtime(self, clock: ManualClock):
+        base = load_config(env={}, dotenv_path=None, project_root=None)
+        config = AppConfig(
+            agora=base.agora,
+            llm=base.llm,
+            governor=GovernorConfig(rate_limit_seconds=45.0),
+            pipeline=PipelineConfig(agent_uid=AGENT_UID),
+            api=base.api,
+            database_path=base.database_path,
+            incident_id="self-echo",
+            log_level="CRITICAL",
+        )
+        return build_runtime(
+            config, clock=clock, sink=RecordingSink(clock=clock), database_path=":memory:"
+        )
+
+    def _say(self, rt, clock, text: str, uid: str, index: int):
+        clock.advance(5)
+        return rt.pipeline.handle_transcript(
+            TranscriptEvent(
+                uid=uid,
+                turn_id=f"echo-{index}",
+                role="human",
+                text=text,
+                final=True,
+                timestamp=clock.now(),
+                source_modality=SourceModality.VOICE,
+            )
+        )
+
+    def test_aegis_cannot_authorise_its_own_proposal(self) -> None:
+        clock = ManualClock(start=T0)
+        rt = self._runtime(clock)
+        self.addCleanup(rt.close)
+
+        self._say(rt, clock, "Let's roll back core-db to version v2.3.", "1001", 1)
+        actions = rt.store.pending_actions()
+        self.assertEqual(1, len(actions), "the operator's proposal was not recorded")
+
+        # Exactly what comes back when AEGIS's own audio is transcribed.
+        self._say(rt, clock, "Yes, go ahead with core-db.", AGENT_UID, 2)
+        after = rt.store.get_proposed_action(actions[0].claim_id)
+        self.assertIs(
+            after.status,
+            ProposedActionStatus.PENDING,
+            "AEGIS authorised its own destructive proposal by hearing itself",
+        )
+
+    def test_the_operator_is_still_heard(self) -> None:
+        # The guard must not cost the thing it protects.
+        clock = ManualClock(start=T0)
+        rt = self._runtime(clock)
+        self.addCleanup(rt.close)
+
+        self._say(rt, clock, "Let's roll back core-db to version v2.3.", "1001", 1)
+        action_id = rt.store.pending_actions()[0].claim_id
+        self._say(rt, clock, "Yes, go ahead with core-db.", "1001", 2)
+        after = rt.store.get_proposed_action(action_id)
+        self.assertIs(after.status, ProposedActionStatus.CONFIRMED)
+        self.assertEqual("1001", after.resolved_by_uid)
+
+    def test_aegis_speech_does_not_mint_new_proposals(self) -> None:
+        # An intervention names the components it is warning about. Extracting
+        # it would turn a warning into a proposal to do the thing.
+        clock = ManualClock(start=T0)
+        rt = self._runtime(clock)
+        self.addCleanup(rt.close)
+
+        self._say(rt, clock, "Let's roll back core-db to version v2.3.", "1001", 1)
+        before = len(rt.store.pending_actions())
+        self._say(
+            rt,
+            clock,
+            "Hold - rolling back core-db to v2.3 will break auth-service and "
+            "payment-api. Do you want to go ahead anyway?",
+            AGENT_UID,
+            2,
+        )
+        self.assertEqual(
+            before,
+            len(rt.store.pending_actions()),
+            "AEGIS's own warning became a new proposed action",
+        )
+
+    def test_the_drop_is_observable(self) -> None:
+        clock = ManualClock(start=T0)
+        rt = self._runtime(clock)
+        self.addCleanup(rt.close)
+        self._say(rt, clock, "Let's roll back core-db.", AGENT_UID, 1)
+        self.assertEqual(
+            1, rt.metrics.snapshot()["counters"].get(TURNS_SELF_ECHO, 0),
+            "a silently dropped turn is indistinguishable from one nobody sent",
+        )
 
 
 class DuplicateTurnPropertyTests(unittest.TestCase):

@@ -158,6 +158,124 @@ _NUMBER_PATTERN = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d+)?)\s*(%|percent|ms|mil
 _VERSION_PATTERN = re.compile(r"\bv(\d+(?:\.\d+)*)\b", re.IGNORECASE)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\s*[;]\s+")
 
+#: Speech recognition writes numbers as words. "Pool utilization looks fine,
+#: like 40%" is a sentence somebody typed; what a microphone delivers is
+#: "like forty percent". A digits-only reader turns that into a claim with a
+#: metric and no value -- and a claim with no value can never be grounded, so
+#: it can never be contradicted. Every spoken demo hits this.
+_UNITS_TO_NINETEEN = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+_TENS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fourty": 40,  # 'fourty': common ASR spelling
+    "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_NUMBER_WORDS = {**_UNITS_TO_NINETEEN, **_TENS}
+
+#: Units as they are spoken.
+_SPOKEN_UNITS = {
+    "%": "%", "percent": "%", "percentage": "%",
+    "ms": "ms", "millisecond": "ms", "milliseconds": "ms",
+    "second": "s", "seconds": "s",
+}
+
+#: Words that may sit between a number and its unit without breaking it:
+#: "forty odd percent", "around ninety percent".
+_NUMBER_FILLER = frozenset({"odd", "or", "so", "about", "roughly", "around"})
+
+_TOKENS = re.compile(r"%|[a-z]+")
+
+
+def _spoken_number(text: str) -> "tuple[Optional[float], Optional[str]]":
+    """Read a number written as words, with its unit if one was said.
+
+    Tokenised rather than matched with one large regular expression, because
+    the alternations in such a pattern happily match inside longer words --
+    "nine" is a prefix of "ninety", so "ninety one percent" reads as 1 unless
+    every branch carries its own word boundary. Scanning whole tokens makes
+    that class of bug impossible rather than merely fixed.
+
+    Returns ``(None, None)`` when there is no spoken quantity, so the caller
+    falls through to the digit pattern unchanged.
+    """
+    tokens = _TOKENS.findall(text.lower().replace("-", " "))
+    index = 0
+    while index < len(tokens):
+        if tokens[index] not in _NUMBER_WORDS and tokens[index] not in ("a", "one"):
+            index += 1
+            continue
+
+        total = 0
+        seen = False
+
+        if (
+            tokens[index] in ("a", "one")
+            and index + 1 < len(tokens)
+            and tokens[index + 1] == "hundred"
+        ):
+            total, seen, index = 100, True, index + 2
+            if index < len(tokens) and tokens[index] == "and":
+                index += 1
+        elif tokens[index] == "a":
+            index += 1
+            continue
+
+        if index < len(tokens) and tokens[index] in _TENS:
+            total += _TENS[tokens[index]]
+            seen = True
+            index += 1
+            # "forty five" is 45. Only a tens word may take a trailing unit.
+            if index < len(tokens) and tokens[index] in _UNITS_TO_NINETEEN:
+                total += _UNITS_TO_NINETEEN[tokens[index]]
+                index += 1
+        elif index < len(tokens) and tokens[index] in _UNITS_TO_NINETEEN:
+            total += _UNITS_TO_NINETEEN[tokens[index]]
+            seen = True
+            index += 1
+
+        if not seen:
+            index += 1
+            continue
+
+        value = float(total)
+        if (
+            index + 1 < len(tokens)
+            and tokens[index] == "point"
+            and tokens[index + 1] in _UNITS_TO_NINETEEN
+        ):
+            value += _UNITS_TO_NINETEEN[tokens[index + 1]] / 10.0
+            index += 2
+
+        while index < len(tokens) and tokens[index] in _NUMBER_FILLER:
+            index += 1
+        unit = _SPOKEN_UNITS.get(tokens[index]) if index < len(tokens) else None
+
+        # A spoken number only counts as a measurement when a unit was said.
+        #
+        # Digits may go unitless -- "pool utilization is 40" is unambiguous --
+        # but number *words* are ordinary English. "Restart one of the
+        # services" contains "one", and reading that as the value 1 would
+        # ground a fabricated measurement against real telemetry and produce
+        # a contradiction nobody claimed. Requiring the unit costs the rare
+        # "utilization is forty" and rules out the whole class.
+        if unit is None:
+            index += 1
+            continue
+        return value, unit
+    return None, None
+
+
+def _standalone_measurement(text: str) -> "tuple[Optional[float], Optional[str]]":
+    """A number with its unit, from a fragment that names no metric."""
+    match = _NUMBER_PATTERN.search(text)
+    if match and match.group(2):  # a bare integer is not a measurement
+        unit = match.group(2)
+        return float(match.group(1)), ("%" if unit in {"%", "percent"} else unit)
+    return _spoken_number(text)
+
 
 class DeterministicProvider:
     """Rule-based extraction over the structured request context."""
@@ -182,10 +300,119 @@ class DeterministicProvider:
 
     def _extract(self, utterance: str, context: ExtractionContext) -> list[dict]:
         claims: list[dict] = []
-        for sentence in self._sentences(utterance):
+        for sentence in self._rejoin_measurements(self._sentences(utterance), context):
             claims.extend(self._classify(sentence, context))
+        claims = self._bind_carried_value(claims, utterance, context)
         substantive = [claim for claim in claims if claim.get("type") != "none"]
         return substantive or claims
+
+    def _rejoin_measurements(
+        self, sentences: list[str], context: ExtractionContext
+    ) -> list[str]:
+        """Put a measurement back together when speech split it in half.
+
+        Typed, the demo's line is one sentence: "Pool utilization looks fine,
+        like 40%." Spoken, the pause after "fine" is transcribed as a full
+        stop, and the turn arrives as "Pool looks fine. Like forty percent."
+
+        Split there, neither half is a measurement: the first names a metric
+        with no value, the second carries a value bound to nothing. Both
+        classify as bare facts, the claim is never grounded, and AEGIS cannot
+        contradict a reading it never compared against.
+
+        Deliberately narrow: the left side must name a metric *and* lack a
+        value, the right side must carry a value *and* name no metric, and
+        the two must be adjacent. Anything else is left exactly as it was.
+        """
+        metrics, aliases = context.known_metrics, context.metric_aliases
+        if not metrics or len(sentences) < 2:
+            return sentences
+
+        merged: list[str] = []
+        index = 0
+        while index < len(sentences):
+            current = sentences[index]
+            if index + 1 < len(sentences):
+                nxt = sentences[index + 1]
+                left_metric, left_value, _ = self._match_metric(current.lower(), metrics, aliases)
+                right_metric, right_value, _ = self._match_metric(nxt.lower(), metrics, aliases)
+                if right_value is None:
+                    # _match_metric only reads a value once a metric anchors
+                    # it, so a fragment naming no metric reports none. Ask the
+                    # number readers directly.
+                    right_value = _standalone_measurement(nxt)[0]
+                if (
+                    left_metric is not None
+                    and left_value is None
+                    and right_metric is None
+                    and right_value is not None
+                ):
+                    merged.append(f"{current.rstrip('.!?')}, {nxt[0].lower()}{nxt[1:]}")
+                    index += 2
+                    continue
+            merged.append(current)
+            index += 1
+        return merged
+
+    def _bind_carried_value(
+        self, claims: list[dict], utterance: str, context: ExtractionContext
+    ) -> list[dict]:
+        """Bind a bare measurement to the metric named in the turn before it.
+
+        The split above is the same failure one level up. Agora ends a turn on
+        a pause, so the halves arrive as two independent transcript events
+        seconds apart:
+
+            06:53:18  "The pool looks fine."     -> metric, no value
+            06:53:20  "Like, forty percent."     -> value, no metric
+
+        Sentence rejoining cannot see across that boundary, so the number
+        stays orphaned and the theory is never grounded.
+
+        The binding is deliberately hard to trigger: this turn must carry a
+        measurement and name no metric, no claim already made here may have
+        bound one, and the *immediately* preceding turn must name a metric
+        while stating no value of its own. One turn of memory, one metric, no
+        search. Provenance still belongs to this utterance -- the speaker did
+        say the number -- so only the metric travels.
+        """
+        metrics, aliases = context.known_metrics, context.metric_aliases
+        if not metrics or not context.recent_turns:
+            return claims
+        if any(c.get("metric_ref") and c.get("claimed_value") is not None for c in claims):
+            return claims
+
+        value, unit = _standalone_measurement(utterance)
+        if value is None:
+            return claims
+        if self._match_metric(utterance.lower(), metrics, aliases)[0] is not None:
+            return claims  # this turn names its own metric; nothing to carry
+
+        previous = context.recent_turns[-1].split(":", 1)[-1].strip().lower()
+        prior_metric, prior_value, _ = self._match_metric(previous, metrics, aliases)
+        if prior_metric is None or prior_value is not None:
+            return claims
+
+        # Read back as the whole remark, not the half of it this turn carried.
+        # The claim is still this turn's -- provenance, speaker and timestamp
+        # are untouched -- but "Like, forty percent." on its own is not a
+        # theory anybody would recognise in the ledger or hear read aloud in a
+        # status summary. The sentence the two turns actually formed is.
+        previous_text = context.recent_turns[-1].split(":", 1)[-1].strip()
+        fragment = utterance.strip()
+        joined = f"{previous_text.rstrip('.!?')}, {fragment[0].lower()}{fragment[1:]}"
+
+        carried = {
+            "text": joined,
+            "type": "hypothesis",
+            "metric_ref": prior_metric,
+            "claimed_value": value,
+        }
+        if unit:
+            carried["claimed_unit"] = unit
+        # Replaces the bare fact this turn would otherwise have produced,
+        # rather than sitting alongside it as a second version of one remark.
+        return [c for c in claims if c.get("type") not in ("fact", "none")] + [carried]
 
     @staticmethod
     def _sentences(utterance: str) -> list[str]:
@@ -364,11 +591,17 @@ class DeterministicProvider:
             anchor = text.find(phrase)
             if anchor == -1:
                 continue
-            match = _NUMBER_PATTERN.search(text[anchor:])
+            tail = text[anchor:]
+            match = _NUMBER_PATTERN.search(tail)
             if match:
                 unit = match.group(2)
                 normalised_unit = "%" if unit in {"%", "percent"} else unit
                 return metric, float(match.group(1)), normalised_unit
+            # Digits first, words second: a transcript may carry either, and
+            # "40%" is unambiguous where "forty" has to be assembled.
+            spoken_value, spoken_unit = _spoken_number(tail)
+            if spoken_value is not None:
+                return metric, spoken_value, spoken_unit
             return metric, None, None
         return None, None, None
 

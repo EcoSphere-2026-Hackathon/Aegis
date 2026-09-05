@@ -457,37 +457,38 @@ class ExtractionService:
         return self._constrain_vocabulary(claim)
 
     def _constrain_vocabulary(self, claim: ExtractedClaim) -> ExtractedClaim:
-        """Drop references to components and metrics that do not exist.
+        """Drop metric references telemetry cannot serve.
 
-        A ``target_ref`` the topology has never heard of cannot be evaluated
-        for blast radius, and a ``metric_ref`` telemetry cannot serve cannot
-        be grounded. Keeping the invented name would produce a claim that
-        silently never matches anything; dropping it makes the gap visible
-        in the logs instead.
+        ``metric_ref`` is constrained because a metric the telemetry layer
+        cannot read can never be grounded: the claimed value would sit in
+        state forever with nothing to compare it against, looking checked.
+        Dropping the reference makes that gap visible in the logs instead.
+
+        ``target_ref`` is deliberately **not** constrained. Restricting it to
+        the shipped topology stopped the model naming any component outside a
+        ten-node fixture, which is too narrow for real speech. The cost of
+        letting it through is that an action can now name something the
+        dependency graph cannot locate -- so the honesty has to live where
+        the consequence does. ``check_blast_radius`` reports an unlocatable
+        target as ``unassessable_target`` rather than returning no findings,
+        because the alternative is a destructive action shown as LOW with
+        nothing against it, which reads as "assessed and safe" when it was
+        never assessable at all.
         """
-        updates: dict[str, Any] = {}
-
-        if claim.metric_ref and self._known_metrics and claim.metric_ref not in self._known_metrics:
-            _log.warning(
-                "dropping unknown metric_ref from claim",
-                stage=STAGE_CLAIM_REJECTED,
-                metric_ref=claim.metric_ref,
-                known_metrics=list(self._known_metrics),
-            )
-            updates["metric_ref"] = None
-            updates["claimed_value"] = None
-
-        if not updates:
+        if not (
+            claim.metric_ref
+            and self._known_metrics
+            and claim.metric_ref not in self._known_metrics
+        ):
             return claim
 
-        if updates.get("target_ref", claim.target_ref) is None and claim.type is ClaimType.PROPOSED_ACTION:
-            # A proposed action without a resolvable target cannot be risk-
-            # evaluated at all. Degrade it to a hypothesis rather than
-            # inventing a target or dropping the utterance entirely.
-            return claim.model_copy(update={**updates, "type": ClaimType.HYPOTHESIS,
-                                            "action_kind": None, "target_schema_version": None,
-                                            "target_ref": None})
-        return claim.model_copy(update=updates)
+        _log.warning(
+            "dropping unknown metric_ref from claim",
+            stage=STAGE_CLAIM_REJECTED,
+            metric_ref=claim.metric_ref,
+            known_metrics=list(self._known_metrics),
+        )
+        return claim.model_copy(update={"metric_ref": None, "claimed_value": None})
 
     def _cache_key(self, event: TranscriptEvent, context: ExtractionContext) -> Optional[tuple]:
         """A key, or ``None`` when this utterance must not be cached.

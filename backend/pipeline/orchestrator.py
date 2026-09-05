@@ -62,6 +62,7 @@ from backend.common.metrics import (
     STAGE_WORKING_SET,
     TURNS_DEDUPED,
     TURNS_INGESTED,
+    TURNS_SELF_ECHO,
     Metrics,
 )
 from backend.common.models import (
@@ -218,6 +219,31 @@ class IncidentPipeline:
     def handle_transcript(self, event: TranscriptEvent) -> TurnResult:
         """Process one transcript event. Never raises."""
         with correlation_scope(event.turn_id):
+            # AEGIS must not hear itself.
+            #
+            # Its own speech goes out over the same channel the operator talks
+            # on, so ASR transcribes it and it comes straight back as another
+            # transcript. Left alone that is not merely noise: the sentences
+            # AEGIS says are *about* actions, so re-extracting them mints new
+            # proposals from its own warnings -- and an intervention ending
+            # "do you want to go ahead anyway?" contains an affirmative, which
+            # against a single open action resolves it. The system authorises
+            # its own destructive proposal, attributed to itself.
+            #
+            # The browser relay already filters by participant uid, but that
+            # is one transport. This is the boundary every transport shares --
+            # HTTP, the relay, the replay harness -- so the rule lives here,
+            # next to the idempotency guard, for the same reason.
+            if self._config.agent_uid and event.uid == self._config.agent_uid:
+                self._metrics.increment(TURNS_SELF_ECHO)
+                _log.info(
+                    "ignoring AEGIS's own voice returning through the channel",
+                    stage=STAGE_TRANSCRIPT_RECEIVED,
+                    uid=event.uid,
+                    turn_id=event.turn_id,
+                )
+                return TurnResult(event=event)
+
             if not event.is_actionable:
                 _log.debug(
                     "ignoring non-actionable transcript event",

@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Iterable, Mapping, Optional, Sequence
 
 from backend.common.enums import (
+    ActionKind,
     DecisionStance,
     EvidenceSource,
     ExtractionCertainty,
@@ -51,6 +52,15 @@ from backend.risk_engine.topology import Topology
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+#: Action kinds worth reporting when their target cannot be located in the
+#: dependency graph. Deliberately not every kind: a scale or a config change
+#: on an unrecognised component is not obviously destructive, and the
+#: intervention channel allows one utterance every 45 seconds.
+_CONSEQUENTIAL_ACTIONS = frozenset(
+    {ActionKind.ROLLBACK, ActionKind.MIGRATION, ActionKind.RESTART, ActionKind.FAILOVER}
+)
 
 
 def latest_evidence_by_metric(evidence: Iterable[Evidence]) -> Mapping[str, Evidence]:
@@ -369,8 +379,41 @@ def check_blast_radius(action: ProposedAction, topology: Optional[Topology]) -> 
     are evaluated this way: reporting a blast radius for a cache flush would
     burn the one intervention the rate limiter allows every 45 seconds.
     """
-    if topology is None or action.target_ref not in topology:
+    if topology is None:
         return []
+
+    if action.target_ref not in topology:
+        # The graph has never heard of this component, so there is no walk to
+        # perform and no dependent to test. Returning nothing here used to be
+        # harmless: extraction dropped unknown targets, so an action could not
+        # reach this line with one. That constraint was removed to let the
+        # model name components beyond the shipped fixture, and this branch
+        # silently became the product's worst outcome -- a destructive action
+        # rated LOW with no findings, which reads as "assessed and safe" when
+        # it was never assessable at all.
+        #
+        # The rule this file already applies to a missing schema version
+        # applies here too: not evaluable is not therefore safe. Scoped to
+        # consequential kinds so an unrecognised cache flush does not spend
+        # the one intervention allowed every 45 seconds.
+        if action.action_kind not in _CONSEQUENTIAL_ACTIONS:
+            return []
+        return [
+            RiskFinding(
+                code=RiskFindingCode.UNASSESSABLE_TARGET,
+                tier=RiskTier.MEDIUM,
+                message=(
+                    f"{action.target_ref} isn't in the dependency graph, so I can't tell "
+                    f"what a {action.action_kind.value.replace('_', ' ')} there would break"
+                ),
+                subject_claim_id=action.claim_id,
+                detail={
+                    "target_ref": action.target_ref,
+                    "action_kind": action.action_kind.value,
+                },
+            )
+        ]
+
     if not action.action_kind.changes_schema_surface:
         return []
 

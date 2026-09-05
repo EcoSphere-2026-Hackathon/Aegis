@@ -223,3 +223,9 @@ RESOLUTIONS_APPLIED = "resolutions_applied"
 
 TURNS_INGESTED = "turns_ingested"
 TURNS_DEDUPED = "turns_deduplicated"
+#: Transcripts that were AEGIS hearing its own voice return through the
+#: channel. Counted rather than merely dropped: a rising number is the echo
+#: guard doing the only thing standing between the agent and authorising its
+#: own proposals, and a flat zero on a live call means the guard is not
+#: configured and the protection is imaginary.
+TURNS_SELF_ECHO = "turns_self_echo"

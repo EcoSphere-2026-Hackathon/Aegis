@@ -197,6 +197,13 @@ class RiskFindingCode(str, Enum):
     #: "yes" to an action they were not talking about.
     AMBIGUOUS_CONFIRMATION = "ambiguous_confirmation"
 
+    #: A consequential action was proposed against something the dependency
+    #: graph does not contain, so its blast radius could not be computed at
+    #: all. Reported rather than passed over, because the alternative is a
+    #: destructive action displayed as LOW with no findings -- which reads as
+    #: "assessed and safe" when the truth is "never assessable".
+    UNASSESSABLE_TARGET = "unassessable_target"
+
 
 class InterventionOutcome(str, Enum):
     """Why a governor decision did or did not reach the humans -- recorded

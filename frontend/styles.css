@@ -275,12 +275,21 @@ a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 15px;
 }
 
 /* ── conversation ─────────────────────────────────────────────────────── */
 
-.turn { display: flex; flex-direction: column; gap: 5px; animation: rise .22s ease-out; }
+/* Tight inside a turn, loose between turns.
+ *
+ * A turn is three stacked pieces -- speaker line, what was said, and the
+ * claim chips AEGIS derived from it -- and the chips come last. At an even
+ * 5px inside and 10px between, a chip sat almost as close to the *next*
+ * speaker's line as to the sentence it describes, so the eye grouped it with
+ * the wrong utterance. Widening the ratio to roughly 1:5 makes each turn read
+ * as one block, and costs nothing overall because the inside tightened by as
+ * much as the outside grew. */
+.turn { display: flex; flex-direction: column; gap: 3px; animation: rise .22s ease-out; }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(5px); }

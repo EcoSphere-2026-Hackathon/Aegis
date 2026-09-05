@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,9 +38,9 @@ from scripts import use_utf8_stdout  # noqa: E402
 
 use_utf8_stdout()
 
-from backend.agora.client import AgoraClient  # noqa: E402
+from backend.agora.sessions import VoiceSessionManager  # noqa: E402
 from backend.common.config import load_config  # noqa: E402
-from backend.common.errors import AegisError  # noqa: E402
+from backend.common.errors import AegisError, InterventionError  # noqa: E402
 from backend.common.logging import configure_logging  # noqa: E402
 
 configure_logging("CRITICAL")
@@ -175,41 +176,76 @@ def check_config() -> int:
 
 
 def check_live() -> int:
-    """Join, speak, leave. The earliest honest proof that REST works."""
+    """Start a voice session, speak into it, stop it.
+
+    Driven through :class:`VoiceSessionManager` -- the same object
+    ``POST /api/voice/sessions`` drives -- rather than through a bare
+    ``AgoraClient.join()``.
+
+    That distinction is the whole point. ``join()`` only sets
+    ``properties.token`` when it is given one, so calling it bare omits the
+    field entirely; on a project with an App Certificate enabled the ConvoAI
+    task then cannot join RTC and dies the instant it starts. The symptom is
+    join returning 200 with status RUNNING, then every later call failing --
+    which reads as broken credentials, the one thing that was actually fine.
+
+    A preflight that exercises a path the application never takes can fail
+    while the product works, and pass while the product is broken. Sharing
+    the session manager is what keeps this honest as the integration moves.
+    """
     config = load_config()
     if not config.agora.is_authenticated:
         print(f"\n  {RED}Cannot run live checks without credentials.{RESET}")
         return 1
+    if not config.agora.can_issue_client_tokens:
+        print(f"\n  {YELLOW}No App Certificate set.{RESET} {DIM}The agent would join "
+              f"untokened, which only works while certificate enforcement is off.{RESET}")
 
-    print(f"\n  {BOLD}Live check{RESET}  {DIM}joins {config.agora.channel_name}, "
-          f"says one line, leaves{RESET}\n")
-    agent_id = None
-    client = AgoraClient(config.agora)
+    print(f"\n  {BOLD}Live check{RESET}  {DIM}starts a voice session the way the API "
+          f"does, speaks one line, stops it{RESET}\n")
+
+    manager = VoiceSessionManager(config.agora)
+    session = None
     try:
-        agent_id = client.join()
-        print(f"    join   {OK}  {DIM}agent {agent_id}{RESET}")
+        session, _tokens, _created = manager.start(
+            incident_id=config.incident_id, participant_uid="900001"
+        )
+        print(f"    session {OK}  {DIM}agent {session.agent_id} in {session.channel}{RESET}")
     except AegisError as exc:
-        print(f"    join   {RED}failed{RESET}  {exc}")
+        print(f"    session {RED}failed{RESET}  {exc}")
         print(f"    {DIM}context: {dict(exc.context)}{RESET}")
+        manager.close()
         return 1
+
+    # The task needs a moment to come up in the channel; speaking into it the
+    # same millisecond it was created races its startup.
+    time.sleep(2)
+
+    failed = False
+    try:
+        manager.speak(
+            config.incident_id,
+            "AEGIS preflight. If you can hear this, the voice path works.",
+        )
+        print(f"    speak   {OK}")
+    except (AegisError, InterventionError) as exc:
+        print(f"    speak   {RED}failed{RESET}  {exc}")
+        failed = True
 
     try:
-        client.speak(agent_id, "AEGIS preflight. If you can hear this, the voice path works.")
-        print(f"    speak  {OK}")
+        manager.stop(session.session_id, session.participant_uid)
+        print(f"    stop    {OK}")
     except AegisError as exc:
-        print(f"    speak  {RED}failed{RESET}  {exc}")
-        return 1
+        print(f"    stop    {YELLOW}failed{RESET}  {exc}  "
+              f"{DIM}(the agent may linger until idle_timeout){RESET}")
     finally:
-        try:
-            client.leave(agent_id)
-            print(f"    leave  {OK}")
-        except AegisError as exc:
-            print(f"    leave  {YELLOW}failed{RESET}  {exc}  "
-                  f"{DIM}(the agent may linger until idle_timeout){RESET}")
-        client.close()
+        manager.close()
 
-    print(f"\n  {GREEN}REST works.{RESET} That proves the requests are accepted. "
-          f"It does not prove the behaviour below.")
+    if failed:
+        return 1
+
+    print(f"\n  {GREEN}The live voice path works.{RESET} That proves a session starts, "
+          f"the agent joins and speech is accepted.\n  It does not prove the behaviour below.")
     return 0
 
 

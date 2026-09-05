@@ -376,8 +376,36 @@ class BlastRadiusCheckTests(unittest.TestCase):
             next(iter(verdict.findings)).detail["reason"], "target_schema_version_unknown"
         )
 
-    def test_action_on_a_node_outside_the_topology_is_skipped(self) -> None:
+    def test_a_target_outside_the_topology_is_reported_not_passed_over(self) -> None:
+        """Unlocatable is not the same as safe.
+
+        This previously asserted LOW, and that was defensible while extraction
+        guaranteed the target existed: the vocabulary constraint dropped any
+        component the graph did not contain, so the branch was unreachable in
+        production and its tier never mattered.
+
+        That constraint was removed to let the model name components beyond
+        the shipped ten-node fixture. The branch became reachable, and LOW
+        with no findings then means a destructive action is displayed as
+        assessed and safe when its blast radius was never computable. The test
+        immediately above this one already fixes the principle for the same
+        situation one level down -- an unevaluable schema version reports
+        MEDIUM rather than staying quiet.
+        """
         action = make_action(target_ref="unknown-service")
+        verdict = evaluate(action, snapshot(), self.topology)
+        self.assertEqual(verdict.risk_tier, RiskTier.MEDIUM)
+        self.assertIn(RiskFindingCode.UNASSESSABLE_TARGET, verdict.codes)
+
+    def test_an_unremarkable_action_on_an_unknown_target_stays_quiet(self) -> None:
+        # The channel allows one utterance every 45 seconds. Reporting every
+        # unrecognised noun would spend it on nothing: only consequential
+        # kinds are worth the interruption.
+        action = make_action(
+            target_ref="unknown-service",
+            action_kind=ActionKind.SCALE,
+            target_schema_version=None,
+        )
         verdict = evaluate(action, snapshot(), self.topology)
         self.assertEqual(verdict.risk_tier, RiskTier.LOW)
 

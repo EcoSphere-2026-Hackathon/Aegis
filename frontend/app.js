@@ -126,17 +126,29 @@
     pulseListening("active");
   }
 
-  function renderClaim(payload) {
-    // Claims arrive keyed by the turn that produced them, so they attach to
-    // the right utterance even if two turns land close together.
-    const turn = [...state.turns.values()].pop();
-    if (!turn) return;
-    const label = payload.type.replace(/_/g, " ");
-    const tag = el("span", "claim-tag", label);
+  // The chip that shows what AEGIS understood an utterance to be. Shared by
+  // the live stream and by hydration so a reloaded page shows the same thing
+  // a watched one does.
+  function claimTag(payload) {
+    const tag = el("span", "claim-tag", payload.type.replace(/_/g, " "));
     tag.dataset.type = payload.type;
     if (payload.metric_ref) tag.title = `metric: ${payload.metric_ref}`;
     else if (payload.target_ref) tag.title = `target: ${payload.target_ref}`;
-    turn.claims.append(tag);
+    return tag;
+  }
+
+  function attachClaim(turnId, payload) {
+    // Keyed by turn where the caller knows it. The live stream does not carry
+    // the turn id on a claim event, so it falls back to the newest turn --
+    // correct there, because a claim is published while its own turn is still
+    // the most recent one.
+    const turn = turnId ? state.turns.get(turnId) : [...state.turns.values()].pop();
+    if (!turn) return;
+    turn.claims.append(claimTag(payload));
+  }
+
+  function renderClaim(payload) {
+    attachClaim(payload.turn_id || payload.source_turn_id, payload);
   }
 
   /* ── interventions ───────────────────────────────────────────────── */
@@ -269,12 +281,22 @@
       });
     }
 
-    // Hydrate conversation
+    // Hydrate conversation.
+    //
+    // The claim *type* is carried through as well as the text. Without it the
+    // rebuilt turns render an empty `.claims` row, and the chips that show
+    // AEGIS classifying speech -- fact, hypothesis, proposed action -- are
+    // gone for good after a reload. Those chips are the most legible evidence
+    // in the console that anything is being reasoned about at all, so losing
+    // them on refresh makes a working system look inert.
+    //
+    // The collection a claim came back in is what names its type: the state
+    // view groups them rather than tagging them individually.
     const allClaims = [
-      ...(view.facts || []),
-      ...(view.hypotheses || []),
-      ...(view.decisions || []),
-      ...(view.proposed_actions || [])
+      ...(view.facts || []).map((c) => ({ ...c, type: "fact" })),
+      ...(view.hypotheses || []).map((c) => ({ ...c, type: "hypothesis" })),
+      ...(view.decisions || []).map((c) => ({ ...c, type: "decision" })),
+      ...(view.proposed_actions || []).map((c) => ({ ...c, type: "proposed_action" })),
     ];
     const turnsById = new Map();
     for (const claim of allClaims) {
@@ -285,11 +307,13 @@
           uid: claim.speaker_uid,
           at: claim.timestamp,
           modality: claim.source_modality || "voice",
-          texts: []
+          texts: [],
+          claims: []
         });
       }
       const turn = turnsById.get(claim.source_turn_id);
       if (!turn.texts.includes(claim.text)) turn.texts.push(claim.text);
+      turn.claims.push(claim);
     }
     const sortedTurns = Array.from(turnsById.values()).sort((a, b) => new Date(a.at) - new Date(b.at));
     for (const turnData of sortedTurns) {
@@ -300,6 +324,15 @@
         modality: turnData.modality,
         text: turnData.texts.join(" ")
       });
+      const entry = state.turns.get(turnData.turn_id);
+      if (!entry) continue;
+      // Rebuilt from scratch, not appended to. refresh() runs after every
+      // pipeline event, and renderTurn skips a turn it has already drawn --
+      // so appending here puts a second copy of every chip on the row on the
+      // next event, and a third on the one after that. Clearing first also
+      // keeps the authoritative /api/state ahead of anything the event
+      // stream added, which is the rule the rest of this file follows.
+      entry.claims.replaceChildren(...turnData.claims.map(claimTag));
     }
   }
 

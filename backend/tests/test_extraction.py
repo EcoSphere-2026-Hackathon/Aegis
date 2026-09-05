@@ -14,11 +14,15 @@ import unittest
 
 from backend.common.enums import ActionKind, ClaimType, DecisionStance, SourceModality
 from backend.common.errors import ProviderError
-from backend.extraction.contracts import ProviderRequest, ProviderResponse
+from backend.extraction.contracts import (
+    ExtractionContext,
+    ProviderRequest,
+    ProviderResponse,
+)
 from backend.extraction.providers.deterministic import DeterministicProvider
 from backend.extraction.service import ExtractionService
 from backend.risk_engine.topology import build_incident_topology
-from backend.telemetry.mock_telemetry import TELEMETRY_METRICS
+from backend.telemetry.mock_telemetry import TELEMETRY_METRICS, MockTelemetry
 from backend.tests.support import transcript
 
 KNOWN_TARGETS = build_incident_topology().nodes()
@@ -277,6 +281,96 @@ class ContextTests(unittest.TestCase):
         service = service_with(ScriptedProvider("{}", fail_times=99), max_attempts=1)
         service.extract(transcript("something important"))
         self.assertEqual(len(service._recent), 1)  # noqa: SLF001
+
+
+class SpokenMeasurementTests(unittest.TestCase):
+    """Speech recognition writes numbers as words, and ends turns on pauses.
+
+    Typed, the demo's first line is one sentence with a comma. Spoken, it
+    arrives as words instead of digits and is frequently cut in half by a
+    pause -- sometimes into two sentences, sometimes into two whole turns.
+    Each of those breaks the same link: the metric ends up in one fragment
+    and the number in another, so nothing carries a value, nothing can be
+    grounded, and AEGIS goes silent against telemetry that plainly disagrees.
+    """
+
+    def _claims(self, utterance: str, recent: tuple = ()) -> list:
+        request = ProviderRequest(
+            system_prompt="", user_prompt="", json_schema={}, prompt_version="v1",
+            utterance=utterance, speaker_uid="1001",
+            context=ExtractionContext(
+                known_targets=KNOWN_TARGETS,
+                known_metrics=tuple(TELEMETRY_METRICS),
+                metric_aliases=MockTelemetry().metric_aliases,
+                recent_turns=recent,
+            ),
+        )
+        return json.loads(DeterministicProvider().complete(request).raw_text)["claims"]
+
+    def _only(self, utterance: str, recent: tuple = ()) -> dict:
+        claims = self._claims(utterance, recent)
+        self.assertEqual(1, len(claims), claims)
+        return claims[0]
+
+    def test_a_spoken_percentage_carries_a_value(self) -> None:
+        claim = self._only("Pool utilization looks fine, like forty percent.")
+        self.assertEqual("hypothesis", claim["type"])
+        self.assertEqual("pool_utilization", claim["metric_ref"])
+        self.assertEqual(40.0, claim["claimed_value"])
+
+    def test_spoken_and_written_numbers_agree(self) -> None:
+        spoken = self._only("Pool utilization looks fine, like forty percent.")
+        written = self._only("Pool utilization looks fine, like 40%.")
+        self.assertEqual(written["claimed_value"], spoken["claimed_value"])
+        self.assertEqual(written["type"], spoken["type"])
+
+    def test_compound_numbers_are_not_truncated(self) -> None:
+        # "nine" is a prefix of "ninety". A pattern without word boundaries
+        # reads "ninety one" as 1 -- a wrong number rather than a missing one,
+        # and a wrong number grounds against real telemetry.
+        claim = self._only("Pool utilization looks like ninety one percent.")
+        self.assertEqual(91.0, claim["claimed_value"])
+
+    def test_a_sentence_split_by_a_pause_is_rejoined(self) -> None:
+        claim = self._only("The pool looks fine. Like forty percent.")
+        self.assertEqual("pool_utilization", claim["metric_ref"])
+        self.assertEqual(40.0, claim["claimed_value"])
+
+    def test_a_value_in_the_next_turn_binds_to_the_metric_before_it(self) -> None:
+        # The live failure: Agora ended the turn on the pause, so the halves
+        # arrived two seconds apart as separate transcript events.
+        claim = self._only(
+            "Like, forty percent.", recent=("665051: The pool looks fine.",)
+        )
+        self.assertEqual("hypothesis", claim["type"])
+        self.assertEqual("pool_utilization", claim["metric_ref"])
+        self.assertEqual(40.0, claim["claimed_value"])
+
+    def test_a_carried_value_needs_a_metric_waiting_for_it(self) -> None:
+        for label, recent in (
+            ("no previous turn", ()),
+            ("previous turn already stated its own value", ("1: pool utilization is 91%",)),
+            ("previous turn names no metric", ("1: the driver is at the gate",)),
+        ):
+            with self.subTest(label):
+                claim = self._only("Like, forty percent.", recent=recent)
+                self.assertIsNone(claim.get("claimed_value"))
+
+    def test_number_words_in_ordinary_prose_invent_nothing(self) -> None:
+        # The dangerous failure is a fabricated measurement, not a missing one.
+        # "Restart one of the services" contains "one".
+        for utterance in (
+            "Restart one of the services.",
+            "We should roll back to a stable version.",
+        ):
+            with self.subTest(utterance=utterance):
+                for claim in self._claims(utterance, recent=("1: The pool looks fine.",)):
+                    self.assertIsNone(claim.get("claimed_value"))
+
+    def test_rejoining_does_not_swallow_a_second_real_claim(self) -> None:
+        types = [c["type"] for c in self._claims("Okay, it is the pool then. Let's roll Core back.")]
+        self.assertIn("hypothesis", types)
+        self.assertIn("proposed_action", types)
 
 
 class DeterministicProviderTests(unittest.TestCase):
@@ -583,7 +677,7 @@ class SemanticRulesTests(unittest.TestCase):
     def test_hypothesis(self):
         outcome = self._service(ScriptedProvider('{"claims": [{"type": "hypothesis", "text": "foo"}]}')).extract(transcript("foo"))
         self.assertEqual(outcome.claims[0].type, ClaimType.HYPOTHESIS)
-        
+
     def test_proposed_action(self):
         outcome = self._service(ScriptedProvider('{"claims": [{"type": "proposed_action", "text": "foo", "target_ref": "payment-api", "action_kind": "restart"}]}')).extract(transcript("foo"))
         self.assertEqual(outcome.claims[0].type, ClaimType.PROPOSED_ACTION)

@@ -216,6 +216,11 @@ class PipelineConfig:
     worker_count: int = 1
     confirmation_window_seconds: float = 120.0
     stale_after_seconds: float = 300.0
+    #: The uid AEGIS speaks under. Transcripts arriving from it are the
+    #: system hearing its own voice come back through the channel, and they
+    #: are dropped at the ingestion boundary rather than reasoned about.
+    #: Empty disables the check, which is what every text-only test wants.
+    agent_uid: str = ""
 
 
 @dataclass(frozen=True)
@@ -368,6 +373,9 @@ def load_config(
         worker_count=_get_int(merged, "PIPELINE_WORKERS", 1, minimum=1),
         confirmation_window_seconds=_get_float(merged, "CONFIRMATION_WINDOW_SECONDS", 120.0, minimum=1.0),
         stale_after_seconds=_get_float(merged, "HYPOTHESIS_STALE_AFTER_SECONDS", 300.0, minimum=1.0),
+        # Taken from the Agora settings so the pipeline recognises its own
+        # voice without importing the transport's configuration.
+        agent_uid=agora.agent_uid,
     )
 
     cors_raw = _get(merged, "AEGIS_CORS_ORIGINS") or ""
